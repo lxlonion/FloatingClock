@@ -1,0 +1,197 @@
+import AppKit
+import ClockCore
+
+final class TransparencyMenuView: NSView {
+    let slider = NSSlider(value: 20, minValue: 0, maxValue: 90, target: nil, action: nil)
+    private let valueLabel = NSTextField(labelWithString: "20%")
+    var onChange: ((Double) -> Void)?
+
+    init() {
+        super.init(frame: CGRect(x: 0, y: 0, width: 286, height: 92))
+        let title = NSTextField(labelWithString: "透明度")
+        title.font = .systemFont(ofSize: 12, weight: .medium)
+        title.frame = CGRect(x: 20, y: 64, width: 160, height: 18)
+        addSubview(title)
+        valueLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        valueLabel.alignment = .right
+        valueLabel.frame = CGRect(x: 212, y: 64, width: 54, height: 18)
+        addSubview(valueLabel)
+        slider.frame = CGRect(x: 18, y: 31, width: 250, height: 25)
+        slider.isContinuous = true
+        slider.target = self
+        slider.action = #selector(sliderChanged)
+        slider.setAccessibilityLabel("时钟透明度，0% 到 90%")
+        addSubview(slider)
+        let low = NSTextField(labelWithString: "0% 不透明")
+        let high = NSTextField(labelWithString: "90% 最透明")
+        for label in [low, high] {
+            label.font = .systemFont(ofSize: 10)
+            label.textColor = .secondaryLabelColor
+            addSubview(label)
+        }
+        low.frame = CGRect(x: 20, y: 10, width: 120, height: 15)
+        high.frame = CGRect(x: 146, y: 10, width: 120, height: 15)
+        high.alignment = .right
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    func update(_ transparency: Double) {
+        slider.doubleValue = transparency
+        valueLabel.stringValue = "\(Int(transparency))%"
+        slider.setAccessibilityValue("\(Int(transparency))%")
+    }
+
+    @objc private func sliderChanged() {
+        let value = slider.doubleValue.rounded()
+        update(value)
+        onChange?(value)
+    }
+}
+
+final class MenuController: NSObject, NSMenuDelegate {
+    let menu = NSMenu()
+    let transparencyView = TransparencyMenuView()
+    private var statusItem: NSStatusItem?
+    private let subtitle = NSTextField(labelWithString: "始终置顶 · 拖动表盘移动")
+    private var lockItem: NSMenuItem!
+    private var visibilityItem: NSMenuItem!
+    private var secondsItem: NSMenuItem!
+    private var dateItem: NSMenuItem!
+    private var sizeItems: [NSMenuItem] = []
+    private var appearanceItems: [NSMenuItem] = []
+    private var presetItems: [NSMenuItem] = []
+    var settings: ClockSettings { didSet { refresh() } }
+    var clockIsVisible = true { didSet { refresh() } }
+    var onSettingsChanged: ((ClockSettings) -> Void)?
+    var onToggleVisibility: (() -> Void)?
+    var onMoveToCurrentScreen: (() -> Void)?
+    var onQuit: (() -> Void)?
+
+    init(settings: ClockSettings, includeStatusItem: Bool = true) {
+        self.settings = settings
+        super.init()
+        menu.autoenablesItems = false
+        menu.delegate = self
+        buildMenu()
+        if includeStatusItem {
+            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+            let image = NSImage(systemSymbolName: "clock", accessibilityDescription: "漂浮时钟设置")
+            image?.isTemplate = true
+            item.button?.image = image
+            item.button?.toolTip = "漂浮时钟 · 透明度与位置设置"
+            item.button?.setAccessibilityLabel("漂浮时钟设置")
+            item.menu = menu
+            statusItem = item
+        }
+        transparencyView.onChange = { [weak self] value in self?.change { $0.transparency = value } }
+        refresh()
+    }
+
+    func menuWillOpen(_ menu: NSMenu) { refresh() }
+
+    private func buildMenu() {
+        let header = NSView(frame: CGRect(x: 0, y: 0, width: 286, height: 53))
+        let title = NSTextField(labelWithString: "漂浮时钟")
+        title.font = .systemFont(ofSize: 14, weight: .semibold)
+        title.frame = CGRect(x: 20, y: 28, width: 250, height: 19)
+        subtitle.font = .systemFont(ofSize: 11)
+        subtitle.textColor = .secondaryLabelColor
+        subtitle.frame = CGRect(x: 20, y: 10, width: 250, height: 16)
+        header.addSubview(title)
+        header.addSubview(subtitle)
+        let headerItem = NSMenuItem()
+        headerItem.view = header
+        menu.addItem(headerItem)
+        menu.addItem(.separator())
+        let sliderItem = NSMenuItem()
+        sliderItem.view = transparencyView
+        menu.addItem(sliderItem)
+        let presets = NSMenuItem(title: "透明度预设", action: nil, keyEquivalent: "")
+        let presetsMenu = NSMenu()
+        presetsMenu.autoenablesItems = false
+        for value in [0, 25, 50, 75, 90] {
+            let item = makeItem(value == 0 ? "0% · 不透明" : "\(value)%", action: #selector(setPreset(_:)))
+            item.tag = value
+            presetItems.append(item)
+            presetsMenu.addItem(item)
+        }
+        presets.submenu = presetsMenu
+        menu.addItem(presets)
+        menu.addItem(.separator())
+        lockItem = makeItem("锁定位置（鼠标穿透）", action: #selector(toggleLock))
+        menu.addItem(lockItem)
+        visibilityItem = makeItem("显示时钟", action: #selector(toggleVisibility))
+        menu.addItem(visibilityItem)
+        menu.addItem(.separator())
+        let sizeItem = NSMenuItem(title: "时钟大小", action: nil, keyEquivalent: "")
+        let sizeMenu = NSMenu()
+        sizeMenu.autoenablesItems = false
+        for (title, size) in [("小巧 · 164", 164), ("标准 · 224", 224), ("大号 · 284", 284)] {
+            let item = makeItem(title, action: #selector(setSize(_:)))
+            item.tag = size
+            sizeItems.append(item)
+            sizeMenu.addItem(item)
+        }
+        sizeItem.submenu = sizeMenu
+        menu.addItem(sizeItem)
+        let appearanceItem = NSMenuItem(title: "表盘外观", action: nil, keyEquivalent: "")
+        let appearanceMenu = NSMenu()
+        appearanceMenu.autoenablesItems = false
+        for (index, title) in ["暖白", "墨黑", "跟随系统"].enumerated() {
+            let item = makeItem(title, action: #selector(setAppearance(_:)))
+            item.tag = index
+            appearanceItems.append(item)
+            appearanceMenu.addItem(item)
+        }
+        appearanceItem.submenu = appearanceMenu
+        menu.addItem(appearanceItem)
+        secondsItem = makeItem("显示秒针", action: #selector(toggleSeconds))
+        menu.addItem(secondsItem)
+        dateItem = makeItem("显示日期", action: #selector(toggleDate))
+        menu.addItem(dateItem)
+        menu.addItem(.separator())
+        menu.addItem(makeItem("移回当前屏幕", action: #selector(moveToCurrentScreen)))
+        menu.addItem(.separator())
+        let quit = makeItem("退出漂浮时钟", action: #selector(quitApp))
+        quit.keyEquivalent = "q"
+        menu.addItem(quit)
+    }
+
+    private func makeItem(_ title: String, action: Selector) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        return item
+    }
+
+    private func refresh() {
+        guard lockItem != nil else { return }
+        transparencyView.update(settings.transparency)
+        lockItem.state = settings.isLocked ? .on : .off
+        visibilityItem.state = clockIsVisible ? .on : .off
+        secondsItem.state = settings.showsSeconds ? .on : .off
+        dateItem.state = settings.showsDate ? .on : .off
+        subtitle.stringValue = settings.isLocked ? "始终置顶 · 已锁定，鼠标可穿透" : "始终置顶 · 拖动表盘移动"
+        for item in presetItems { item.state = Double(item.tag) == settings.transparency ? .on : .off }
+        for item in sizeItems { item.state = Double(item.tag) == settings.faceSize ? .on : .off }
+        for item in appearanceItems { item.state = ClockAppearance.allCases[item.tag] == settings.appearance ? .on : .off }
+    }
+
+    private func change(_ edit: (inout ClockSettings) -> Void) {
+        var updated = settings
+        edit(&updated)
+        settings = updated.normalized()
+        onSettingsChanged?(settings)
+    }
+
+    @objc private func setPreset(_ item: NSMenuItem) { change { $0.transparency = Double(item.tag) } }
+    @objc private func setSize(_ item: NSMenuItem) { change { $0.faceSize = Double(item.tag) } }
+    @objc private func setAppearance(_ item: NSMenuItem) { change { $0.appearance = ClockAppearance.allCases[item.tag] } }
+    @objc private func toggleLock() { change { $0.isLocked.toggle() } }
+    @objc private func toggleSeconds() { change { $0.showsSeconds.toggle() } }
+    @objc private func toggleDate() { change { $0.showsDate.toggle() } }
+    @objc private func toggleVisibility() { onToggleVisibility?() }
+    @objc private func moveToCurrentScreen() { onMoveToCurrentScreen?() }
+    @objc private func quitApp() { onQuit?() }
+}
