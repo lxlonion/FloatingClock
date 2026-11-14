@@ -4,9 +4,12 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="${FLOATING_CLOCK_BUILD_DIR:-$PROJECT_DIR/.build}"
 OUTPUT_DIR="${FLOATING_CLOCK_OUTPUT_DIR:-$PROJECT_DIR/dist}"
+export CLANG_MODULE_CACHE_PATH="$BUILD_DIR/ModuleCache"
+export SWIFTPM_MODULECACHE_OVERRIDE="$CLANG_MODULE_CACHE_PATH"
 
-swift build --package-path "$PROJECT_DIR" --scratch-path "$BUILD_DIR" --configuration release
-BIN_DIR="$(swift build --package-path "$PROJECT_DIR" --scratch-path "$BUILD_DIR" --configuration release --show-bin-path)"
+SWIFT_OPTIONS=(--disable-sandbox --package-path "$PROJECT_DIR" --scratch-path "$BUILD_DIR" --cache-path "$BUILD_DIR/cache" --config-path "$BUILD_DIR/config" --security-path "$BUILD_DIR/security")
+swift build "${SWIFT_OPTIONS[@]}" --configuration release
+BIN_DIR="$(swift build "${SWIFT_OPTIONS[@]}" --configuration release --show-bin-path)"
 APP_DIR="$OUTPUT_DIR/FloatingClock.app"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$BIN_DIR/FloatingClock" "$APP_DIR/Contents/MacOS/FloatingClock"
