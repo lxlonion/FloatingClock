@@ -202,6 +202,35 @@ enum RuntimeChecks {
         try renderFace(to: path, settings: settings)
     }
 
+    /// Render the real settings controls without opening a window or changing preferences.
+    static func renderDocumentationPreviews(to directory: String) throws {
+        try renderStylePreviews(to: directory)
+        try renderQuickPreviews(to: directory)
+        for enabled in [true, false] {
+            var settings = ClockSettings()
+            settings.showsMinuteNumerals = enabled
+            let controller = AdvancedSettingsWindowController(settings: settings)
+            guard let window = controller.window, let content = window.contentView else {
+                throw NSError(domain: "FloatingClock.documentation", code: 1)
+            }
+            window.appearance = NSAppearance(named: .aqua)
+            let view = content.superview ?? content
+            view.layoutSubtreeIfNeeded()
+            guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+                throw NSError(domain: "FloatingClock.documentation", code: 2)
+            }
+            window.appearance?.performAsCurrentDrawingAppearance {
+                view.cacheDisplay(in: view.bounds, to: bitmap)
+            }
+            guard let png = bitmap.representation(using: .png, properties: [:]) else {
+                throw NSError(domain: "FloatingClock.documentation", code: 3)
+            }
+            let name = enabled ? "advanced-settings.png" : "advanced-settings-disabled.png"
+            try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name))
+            controller.close()
+        }
+    }
+
     static func renderQuickPreviews(to directory: String) throws {
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         for appearance in [ClockAppearance.light, .dark] {

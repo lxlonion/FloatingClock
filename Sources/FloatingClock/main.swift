@@ -93,6 +93,15 @@ application.setActivationPolicy(.accessory)
 if CommandLine.arguments.contains("--smoke-test") {
     exit(RuntimeChecks.run())
 }
+if let index = CommandLine.arguments.firstIndex(of: "--render-documentation-previews"), CommandLine.arguments.count > index + 1 {
+    do {
+        try RuntimeChecks.renderDocumentationPreviews(to: CommandLine.arguments[index + 1])
+        exit(0)
+    } catch {
+        fputs("Documentation previews failed: \(error)\n", stderr)
+        exit(1)
+    }
+}
 if let index = CommandLine.arguments.firstIndex(of: "--render-quick-previews"), CommandLine.arguments.count > index + 1 {
     do {
         try RuntimeChecks.renderQuickPreviews(to: CommandLine.arguments[index + 1])
