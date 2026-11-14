@@ -29,6 +29,7 @@ public struct ClockSettings: Codable, Equatable {
     public var style: ClockStyle = .minimal
     public var showsMinuteNumerals = false
     public var minuteNumeralOpacity: Double = 40
+    public var minuteNumeralSize: Double = 100
     public var isLocked = false
     public var showsSeconds = true
     public var showsDate = true
@@ -37,7 +38,7 @@ public struct ClockSettings: Codable, Equatable {
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case transparency, faceSize, appearance, style, showsMinuteNumerals, minuteNumeralOpacity
+        case transparency, faceSize, appearance, style, showsMinuteNumerals, minuteNumeralOpacity, minuteNumeralSize
         case isLocked, showsSeconds, showsDate, origin
     }
 
@@ -52,6 +53,7 @@ public struct ClockSettings: Codable, Equatable {
         // The removed third style becomes style one with the shared minute layer enabled.
         showsMinuteNumerals = try values.decodeIfPresent(Bool.self, forKey: .showsMinuteNumerals) ?? (savedStyle == "style3")
         minuteNumeralOpacity = try values.decodeIfPresent(Double.self, forKey: .minuteNumeralOpacity) ?? minuteNumeralOpacity
+        minuteNumeralSize = try values.decodeIfPresent(Double.self, forKey: .minuteNumeralSize) ?? minuteNumeralSize
         isLocked = try values.decodeIfPresent(Bool.self, forKey: .isLocked) ?? isLocked
         showsSeconds = try values.decodeIfPresent(Bool.self, forKey: .showsSeconds) ?? showsSeconds
         showsDate = try values.decodeIfPresent(Bool.self, forKey: .showsDate) ?? showsDate
@@ -66,6 +68,7 @@ public struct ClockSettings: Codable, Equatable {
         result.transparency = transparency.isFinite ? min(90, max(0, transparency.rounded())) : 20
         result.faceSize = faceSize.isFinite ? min(360, max(140, faceSize)) : 224
         result.minuteNumeralOpacity = minuteNumeralOpacity.isFinite ? min(100, max(0, minuteNumeralOpacity.rounded())) : 40
+        result.minuteNumeralSize = minuteNumeralSize.isFinite ? min(100, max(40, minuteNumeralSize.rounded())) : 100
         if let origin, !origin.x.isFinite || !origin.y.isFinite { result.origin = nil }
         return result
     }

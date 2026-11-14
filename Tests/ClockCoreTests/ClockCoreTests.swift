@@ -72,6 +72,7 @@ final class ClockCoreTests: XCTestCase {
             settings.style = style
             settings.showsMinuteNumerals = true
             settings.minuteNumeralOpacity = 72
+            settings.minuteNumeralSize = 65
             SettingsStore(defaults: defaults).save(settings)
             XCTAssertEqual(SettingsStore(defaults: defaults).load(), settings)
         }
@@ -83,6 +84,7 @@ final class ClockCoreTests: XCTestCase {
         XCTAssertEqual(settings.style, .minimal)
         XCTAssertTrue(settings.showsMinuteNumerals)
         XCTAssertEqual(settings.minuteNumeralOpacity, 40)
+        XCTAssertEqual(settings.minuteNumeralSize, 100)
         XCTAssertEqual(settings.transparency, 63)
         XCTAssertEqual(settings.faceSize, 284)
         XCTAssertEqual(settings.appearance, .dark)
@@ -99,6 +101,7 @@ final class ClockCoreTests: XCTestCase {
             XCTAssertEqual(settings.style, style)
             XCTAssertFalse(settings.showsMinuteNumerals)
             XCTAssertEqual(settings.transparency, 27)
+            XCTAssertEqual(settings.minuteNumeralSize, 100)
         }
     }
 
@@ -128,6 +131,23 @@ final class ClockCoreTests: XCTestCase {
         XCTAssertEqual(sunday.day, "15")
         XCTAssertEqual(sunday.weekday, "周日")
         XCTAssertEqual(sunday.minute, "00")
+    }
+
+    func testMinuteSizeBoundsAndUpgradePreserveTheExistingDial() throws {
+        let old = try JSONDecoder().decode(ClockSettings.self, from: Data(
+            #"{"showsMinuteNumerals":true,"minuteNumeralOpacity":67,"faceSize":284}"#.utf8))
+        XCTAssertEqual(old.minuteNumeralSize, 100)
+        XCTAssertEqual(old.minuteNumeralOpacity, 67)
+        XCTAssertTrue(old.showsMinuteNumerals)
+        var settings = old
+        settings.minuteNumeralSize = 120
+        XCTAssertEqual(settings.normalized().minuteNumeralSize, 100)
+        settings.minuteNumeralSize = 0
+        XCTAssertEqual(settings.normalized().minuteNumeralSize, 40)
+        settings.minuteNumeralSize = .nan
+        XCTAssertEqual(settings.normalized().minuteNumeralSize, 100)
+        XCTAssertEqual(settings.normalized().faceSize, old.faceSize)
+        XCTAssertEqual(settings.normalized().minuteNumeralOpacity, old.minuteNumeralOpacity)
     }
 
     func testDisconnectedDisplayRecoversClockInsideVisibleFrame() {

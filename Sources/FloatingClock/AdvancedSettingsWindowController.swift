@@ -1,0 +1,241 @@
+import AppKit
+import ClockCore
+
+final class SettingsSliderRow: NSView {
+    let slider: NSSlider
+    private let valueLabel = NSTextField(labelWithString: "")
+    private let suffix: String
+    var onChange: ((Double) -> Void)?
+
+    var isEnabled = true {
+        didSet {
+            slider.isEnabled = isEnabled
+            alphaValue = isEnabled ? 1 : 0.45
+        }
+    }
+
+    init(title: String, value: Double, range: ClosedRange<Double>, suffix: String = "%",
+         lowText: String, highText: String, help: String) {
+        slider = NSSlider(value: value, minValue: range.lowerBound, maxValue: range.upperBound,
+                          target: nil, action: nil)
+        self.suffix = suffix
+        super.init(frame: .zero)
+        let titleLabel = NSTextField(labelWithString: title)
+        let low = NSTextField(labelWithString: lowText)
+        let high = NSTextField(labelWithString: highText)
+        titleLabel.font = .systemFont(ofSize: 13)
+        valueLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+        valueLabel.alignment = .right
+        for label in [low, high] {
+            label.font = .systemFont(ofSize: 11)
+            label.textColor = .secondaryLabelColor
+        }
+        high.alignment = .right
+        slider.isContinuous = true
+        slider.target = self
+        slider.action = #selector(sliderChanged)
+        slider.setAccessibilityLabel(title)
+        slider.setAccessibilityHelp(help)
+        toolTip = help
+        for view in [titleLabel, valueLabel, slider, low, high] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(view)
+        }
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 72),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor),
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: valueLabel.leadingAnchor, constant: -8),
+            valueLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
+            valueLabel.firstBaselineAnchor.constraint(equalTo: titleLabel.firstBaselineAnchor),
+            valueLabel.widthAnchor.constraint(equalToConstant: 70),
+            slider.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 3),
+            slider.leadingAnchor.constraint(equalTo: leadingAnchor),
+            slider.trailingAnchor.constraint(equalTo: trailingAnchor),
+            low.topAnchor.constraint(equalTo: slider.bottomAnchor, constant: 1),
+            low.leadingAnchor.constraint(equalTo: leadingAnchor),
+            high.firstBaselineAnchor.constraint(equalTo: low.firstBaselineAnchor),
+            high.trailingAnchor.constraint(equalTo: trailingAnchor)
+        ])
+        update(value)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func update(_ value: Double) {
+        slider.doubleValue = value
+        valueLabel.stringValue = "\(Int(value.rounded()))\(suffix)"
+    }
+
+    @objc private func sliderChanged() {
+        let value = slider.doubleValue.rounded()
+        update(value)
+        onChange?(value)
+    }
+}
+
+final class AdvancedSettingsWindowController: NSWindowController {
+    let stylePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    let appearancePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    let secondsButton = NSButton(checkboxWithTitle: "显示秒针", target: nil, action: nil)
+    let dateButton = NSButton(checkboxWithTitle: "显示日期与星期", target: nil, action: nil)
+    let minuteNumeralsButton = NSButton(checkboxWithTitle: "显示分钟大字", target: nil, action: nil)
+    let faceSizeRow = SettingsSliderRow(
+        title: "时钟大小", value: 224, range: 140...360, suffix: "",
+        lowText: "140 · 小巧", highText: "360 · 大号", help: "调整整个表盘的大小。")
+    let minuteOpacityRow = SettingsSliderRow(
+        title: "大字浓度", value: 40, range: 0...100,
+        lowText: "0% · 透明", highText: "100% · 实色", help: "只改变分钟大字的浓度，不影响整个时钟的透明度。")
+    let minuteSizeRow = SettingsSliderRow(
+        title: "大字大小", value: 100, range: 40...100,
+        lowText: "40% · 较小", highText: "100% · 最大", help: "相对于表盘内可用空间的大小，数字始终居中。")
+    var settings: ClockSettings { didSet { refresh() } }
+    var onSettingsChanged: ((ClockSettings) -> Void)?
+
+    init(settings: ClockSettings) {
+        self.settings = settings.normalized()
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 500, height: 620),
+                              styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+        window.title = "漂浮时钟 · 高级设置"
+        window.isReleasedWhenClosed = false
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        super.init(window: window)
+        buildContent()
+        refresh()
+        window.center()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func showSettings() {
+        refresh()
+        if window?.isMiniaturized == true { window?.deminiaturize(nil) }
+        NSApp.activate(ignoringOtherApps: true)
+        showWindow(nil)
+        window?.makeKeyAndOrderFront(nil)
+    }
+
+    private func buildContent() {
+        guard let window, let content = window.contentView else { return }
+        let title = NSTextField(labelWithString: "高级设置")
+        title.font = .systemFont(ofSize: 20, weight: .semibold)
+        let subtitle = note("调整会立即生效，并自动保存。")
+        let header = stack([title, subtitle], spacing: 5)
+
+        stylePopup.addItems(withTitles: ClockStyle.allCases.map(\.menuTitle))
+        stylePopup.target = self
+        stylePopup.action = #selector(styleChanged)
+        stylePopup.setAccessibilityLabel("表盘样式")
+        appearancePopup.addItems(withTitles: ["暖白", "墨黑", "跟随系统"])
+        appearancePopup.target = self
+        appearancePopup.action = #selector(appearanceChanged)
+        appearancePopup.setAccessibilityLabel("表盘外观")
+        let dial = stack([
+            heading("表盘"),
+            choiceRow("样式", control: stylePopup),
+            choiceRow("外观", control: appearancePopup),
+            faceSizeRow
+        ])
+
+        secondsButton.target = self
+        secondsButton.action = #selector(secondsChanged)
+        dateButton.target = self
+        dateButton.action = #selector(dateChanged)
+        let toggles = NSStackView(views: [secondsButton, dateButton])
+        toggles.orientation = .horizontal
+        toggles.spacing = 28
+        let details = stack([heading("显示内容"), toggles])
+
+        minuteNumeralsButton.target = self
+        minuteNumeralsButton.action = #selector(minuteNumeralsChanged)
+        let minutes = stack([
+            heading("分钟大字"), minuteNumeralsButton,
+            note("开启后可调整浓度和大小，可叠加在任一表盘上。"),
+            minuteOpacityRow, minuteSizeRow
+        ])
+        let done = NSButton(title: "完成", target: self, action: #selector(closeSettings))
+        done.bezelStyle = .rounded
+        done.keyEquivalent = "\r"
+        let footer = NSStackView(views: [NSView(), done])
+        footer.orientation = .horizontal
+        let layout = stack([header, separator(), dial, separator(), details, separator(), minutes, footer], spacing: 16)
+        layout.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(layout)
+        NSLayoutConstraint.activate([
+            layout.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
+            layout.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
+            layout.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -24),
+            layout.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20)
+        ])
+        let height = layout.fittingSize.height + 44
+        window.setContentSize(NSSize(width: 500, height: height))
+        faceSizeRow.onChange = { [weak self] value in self?.change { $0.faceSize = value } }
+        minuteOpacityRow.onChange = { [weak self] value in self?.change { $0.minuteNumeralOpacity = value } }
+        minuteSizeRow.onChange = { [weak self] value in self?.change { $0.minuteNumeralSize = value } }
+    }
+
+    private func stack(_ views: [NSView], spacing: CGFloat = 10) -> NSStackView {
+        let result = NSStackView(views: views)
+        result.orientation = .vertical
+        result.alignment = .leading
+        result.spacing = spacing
+        for view in views { view.widthAnchor.constraint(equalTo: result.widthAnchor).isActive = true }
+        return result
+    }
+
+    private func heading(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        return label
+    }
+
+    private func note(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 12)
+        label.textColor = .secondaryLabelColor
+        return label
+    }
+
+    private func choiceRow(_ title: String, control: NSView) -> NSStackView {
+        let label = NSTextField(labelWithString: title)
+        label.widthAnchor.constraint(equalToConstant: 64).isActive = true
+        let row = NSStackView(views: [label, control])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 12
+        return row
+    }
+
+    private func separator() -> NSBox {
+        let line = NSBox()
+        line.boxType = .separator
+        return line
+    }
+
+    private func refresh() {
+        stylePopup.selectItem(at: ClockStyle.allCases.firstIndex(of: settings.style) ?? 0)
+        appearancePopup.selectItem(at: ClockAppearance.allCases.firstIndex(of: settings.appearance) ?? 0)
+        secondsButton.state = settings.showsSeconds ? .on : .off
+        dateButton.state = settings.showsDate ? .on : .off
+        minuteNumeralsButton.state = settings.showsMinuteNumerals ? .on : .off
+        faceSizeRow.update(settings.faceSize)
+        minuteOpacityRow.update(settings.minuteNumeralOpacity)
+        minuteSizeRow.update(settings.minuteNumeralSize)
+        minuteOpacityRow.isEnabled = settings.showsMinuteNumerals
+        minuteSizeRow.isEnabled = settings.showsMinuteNumerals
+    }
+
+    private func change(_ edit: (inout ClockSettings) -> Void) {
+        var updated = settings
+        edit(&updated)
+        settings = updated.normalized()
+        onSettingsChanged?(settings)
+    }
+
+    @objc private func styleChanged() { change { $0.style = ClockStyle.allCases[stylePopup.indexOfSelectedItem] } }
+    @objc private func appearanceChanged() { change { $0.appearance = ClockAppearance.allCases[appearancePopup.indexOfSelectedItem] } }
+    @objc private func secondsChanged() { change { $0.showsSeconds = secondsButton.state == .on } }
+    @objc private func dateChanged() { change { $0.showsDate = dateButton.state == .on } }
+    @objc private func minuteNumeralsChanged() { change { $0.showsMinuteNumerals = minuteNumeralsButton.state == .on } }
+    @objc private func closeSettings() { close() }
+}
