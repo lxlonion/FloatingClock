@@ -13,7 +13,7 @@ public enum ClockStyle: String, Codable, CaseIterable {
         switch self {
         case .minimal: return "样式一 · 极简刻度"
         case .cardinalNumbers: return "样式二 · 12 / 3 / 6 / 9"
-        case .minuteReadout: return "样式三 · 底部分钟"
+        case .minuteReadout: return "样式三 · 中央大数字"
         }
     }
 }

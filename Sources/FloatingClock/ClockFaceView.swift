@@ -6,6 +6,7 @@ final class ClockFaceView: NSView {
     var fixedDate: Date?
     var onDragFinished: (() -> Void)?
     var onContextMenu: ((NSEvent) -> Void)?
+    private var minutePathCache: (minute: String, card: CGRect, path: CGPath)?
 
     override var acceptsFirstResponder: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -89,8 +90,14 @@ final class ClockFaceView: NSView {
         }
 
         if settings.style == .minuteReadout {
-            drawCentered(readout.minute, at: CGPoint(x: center.x, y: center.y - 53 * scale),
-                         font: .monospacedDigitSystemFont(ofSize: 28 * scale, weight: .regular), color: ink.withAlphaComponent(0.65))
+            if minutePathCache?.minute != readout.minute || minutePathCache?.card != card {
+                minutePathCache = MinuteNumerals.path(for: readout.minute, in: card).map { (readout.minute, card, $0) }
+            }
+            if let path = minutePathCache?.path, let context = NSGraphicsContext.current?.cgContext {
+                context.setFillColor(ink.withAlphaComponent(dark ? 0.38 : 0.34).cgColor)
+                context.addPath(path)
+                context.fillPath()
+            }
         }
 
         let angles = ClockAngles(date: now)

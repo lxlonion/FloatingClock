@@ -92,20 +92,27 @@ enum RuntimeChecks {
                 }
             }
             try renderOverview(to: "\(directory)/styles-\(appearance.rawValue).png", appearance: appearance)
+            for minute in [0, 11, 58] {
+                var settings = ClockSettings()
+                settings.transparency = 0
+                settings.style = .minuteReadout
+                settings.appearance = appearance
+                try renderFace(to: "\(directory)/style3-\(appearance.rawValue)-minute\(minute).png", settings: settings, minute: minute)
+            }
         }
     }
 
-    private static func renderFace(to path: String, settings: ClockSettings) throws {
-        let bitmap = try faceBitmap(settings: settings)
+    private static func renderFace(to path: String, settings: ClockSettings, minute: Int = 15) throws {
+        let bitmap = try faceBitmap(settings: settings, minute: minute)
         guard let data = bitmap.representation(using: .png, properties: [:]) else {
             throw NSError(domain: "FloatingClock.preview", code: 2)
         }
         try data.write(to: URL(fileURLWithPath: path))
     }
 
-    private static func faceBitmap(settings: ClockSettings) throws -> NSBitmapImageRep {
+    private static func faceBitmap(settings: ClockSettings, minute: Int = 15) throws -> NSBitmapImageRep {
         let panel = ClockPanel(settings: settings)
-        panel.face.fixedDate = ISO8601DateFormatter().date(from: "2026-11-14T10:15:36+08:00")
+        panel.face.fixedDate = ISO8601DateFormatter().date(from: "2026-11-14T10:\(String(format: "%02d", minute)):36+08:00")
         guard let bitmap = panel.face.bitmapImageRepForCachingDisplay(in: panel.face.bounds) else {
             throw NSError(domain: "FloatingClock.preview", code: 1)
         }
