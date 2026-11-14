@@ -71,6 +71,8 @@ enum RuntimeChecks {
         advanced.secondsButton.performClick(nil)
         check(!panel.face.settings.showsSeconds && !store.load().showsSeconds,
               "advanced seconds toggle reaches rendered face and preferences")
+        check(controller.quickMenu.items[2].state == .off,
+              "advanced seconds toggle updates the quick menu")
         check(advanced.stylePopup.numberOfItems == 2, "advanced style picker contains both dials")
         for (index, style) in ClockStyle.allCases.enumerated() {
             advanced.stylePopup.selectItem(at: index)
@@ -90,6 +92,8 @@ enum RuntimeChecks {
         advanced.minuteNumeralsButton.performClick(nil)
         check(advanced.minuteOpacityRow.slider.isEnabled && advanced.minuteSizeRow.slider.isEnabled && panel.face.settings.showsMinuteNumerals,
               "enabling minute numerals enables their detailed controls")
+        check(controller.quickMenu.items[1].state == .on,
+              "advanced minute toggle updates the quick menu")
         let windowAlpha = panel.alphaValue
         let minuteSlider = advanced.minuteOpacityRow.slider
         minuteSlider.doubleValue = 67
@@ -129,8 +133,62 @@ enum RuntimeChecks {
         }
         panel.showClock()
         check(panel.isVisible, "clock can be shown")
+        check(controller.quickMenu.items.map(\.title) == ["锁定位置", "显示分钟大字", "显示秒针"],
+              "quick menu contains exactly the three requested toggles")
+        let minutesBefore = panel.face.settings.showsMinuteNumerals
+        controller.quickMenu.performActionForItem(at: 1)
+        check(panel.face.settings.showsMinuteNumerals != minutesBefore &&
+              store.load().showsMinuteNumerals == panel.face.settings.showsMinuteNumerals,
+              "quick minute toggle updates the clock and saved preferences")
+        check(advanced.minuteNumeralsButton.state == .off &&
+              !advanced.minuteOpacityRow.slider.isEnabled && !advanced.minuteSizeRow.slider.isEnabled &&
+              advanced.minuteSizeRow.slider.doubleValue == 65,
+              "quick minute toggle updates advanced controls without losing their values")
+        let secondsBefore = panel.face.settings.showsSeconds
+        controller.quickMenu.performActionForItem(at: 2)
+        check(panel.face.settings.showsSeconds != secondsBefore,
+              "quick seconds toggle reaches the clock")
+        check(advanced.secondsButton.state == .on,
+              "quick seconds toggle updates advanced settings")
+        controller.quickMenu.performActionForItem(at: 0)
+        check(panel.ignoresMouseEvents && panel.quickAccessPanel.isVisible &&
+              !panel.quickAccessPanel.ignoresMouseEvents && controller.quickMenu.items[0].state == .on,
+              "locked clock passes clicks through while its small plus remains interactive")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.06))
+        let plusPoint = CGPoint(x: panel.quickAccessPanel.frame.midX, y: panel.quickAccessPanel.frame.midY)
+        let centerPoint = CGPoint(x: panel.frame.midX, y: panel.frame.midY)
+        let plusHit = NSWindow.windowNumber(at: plusPoint, belowWindowWithWindowNumber: 0)
+        let centerHit = NSWindow.windowNumber(at: centerPoint, belowWindowWithWindowNumber: 0)
+        check(plusHit == panel.quickAccessPanel.windowNumber, "WindowServer routes plus clicks to the small entry window")
+        check(centerHit != panel.windowNumber && centerHit != panel.quickAccessPanel.windowNumber,
+              "WindowServer routes locked clock center clicks to underlying windows")
+        var requests = 0
+        panel.onQuickMenuRequested = { _ in requests += 1 }
+        panel.quickAccessPanel.button.performClick(nil)
+        check(requests == 1, "plus button requests the quick menu without unlocking the clock")
+        if let screen = panel.screen?.visibleFrame {
+            for (x, y, corner) in [(screen.minX + 20, screen.maxY - panel.frame.height - 20, ClockCorner.topRight),
+                                    (screen.maxX - panel.frame.width - 20, screen.maxY - panel.frame.height - 20, .topLeft),
+                                    (screen.minX + 20, screen.minY + 20, .bottomRight),
+                                    (screen.maxX - panel.frame.width - 20, screen.minY + 20, .bottomLeft)] {
+                panel.setFrameOrigin(CGPoint(x: x, y: y))
+                let card = panel.face.bounds.insetBy(dx: ClockLayout.padding, dy: ClockLayout.padding)
+                let expected = panel.convertToScreen(QuickAccessLayout.buttonFrame(in: card, corner: corner))
+                check(panel.face.quickAccessCorner == corner &&
+                      abs(panel.quickAccessPanel.frame.minX - expected.minX) < 1 &&
+                      abs(panel.quickAccessPanel.frame.minY - expected.minY) < 1,
+                      "\(corner.rawValue) entry follows the clock and avoids the nearer horizontal edge")
+            }
+        }
+        controller.quickMenu.performActionForItem(at: 0)
+        check(!panel.ignoresMouseEvents && !panel.quickAccessPanel.isVisible && panel.face.quickAccessCorner == nil,
+              "quick unlock restores dragging and removes the plus entry")
+        check(controller.menu.items.first(where: { $0.title == "锁定位置（鼠标穿透）" })?.state == .off,
+              "quick settings stay synchronized with the full menu")
+        controller.quickMenu.performActionForItem(at: 0)
         panel.hideClock()
         check(!panel.isVisible, "clock can be hidden")
+        check(!panel.quickAccessPanel.isVisible, "hiding the clock also hides its small entry")
         let result: [String: Any] = ["passed": failures.isEmpty, "count": checks.count, "checks": checks, "failures": failures]
         let data = try! JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
         print(String(data: data, encoding: .utf8)!)
@@ -142,6 +200,70 @@ enum RuntimeChecks {
         settings.transparency = 0
         settings.faceSize = 336
         try renderFace(to: path, settings: settings)
+    }
+
+    /// Render the real settings controls without opening a window or changing preferences.
+    static func renderDocumentationPreviews(to directory: String) throws {
+        try renderStylePreviews(to: directory)
+        try renderQuickPreviews(to: directory)
+        for enabled in [true, false] {
+            var settings = ClockSettings()
+            settings.showsMinuteNumerals = enabled
+            let controller = AdvancedSettingsWindowController(settings: settings)
+            guard let window = controller.window, let content = window.contentView else {
+                throw NSError(domain: "FloatingClock.documentation", code: 1)
+            }
+            window.appearance = NSAppearance(named: .aqua)
+            let view = content.superview ?? content
+            view.layoutSubtreeIfNeeded()
+            guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+                throw NSError(domain: "FloatingClock.documentation", code: 2)
+            }
+            window.appearance?.performAsCurrentDrawingAppearance {
+                view.cacheDisplay(in: view.bounds, to: bitmap)
+            }
+            guard let png = bitmap.representation(using: .png, properties: [:]) else {
+                throw NSError(domain: "FloatingClock.documentation", code: 3)
+            }
+            let name = enabled ? "advanced-settings.png" : "advanced-settings-disabled.png"
+            try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name))
+            controller.close()
+        }
+    }
+
+    static func renderQuickPreviews(to directory: String) throws {
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        for appearance in [ClockAppearance.light, .dark] {
+            for corner in ClockCorner.allCases {
+                var settings = ClockSettings()
+                settings.isLocked = true
+                settings.showsMinuteNumerals = true
+                settings.appearance = appearance
+                let panel = ClockPanel(settings: settings)
+                panel.face.fixedDate = ISO8601DateFormatter().date(from: "2026-11-14T10:15:36+08:00")
+                panel.face.quickAccessCorner = corner
+                let bitmap = panel.face.bitmapImageRepForCachingDisplay(in: panel.face.bounds)!
+                panel.face.cacheDisplay(in: panel.face.bounds, to: bitmap)
+                let canvas = NSImage(size: panel.face.bounds.size)
+                canvas.lockFocus()
+                NSImage(cgImage: bitmap.cgImage!, size: panel.face.bounds.size).draw(at: .zero, from: .zero, operation: .sourceOver, fraction: 1)
+                let card = panel.face.bounds.insetBy(dx: ClockLayout.padding, dy: ClockLayout.padding)
+                let buttonFrame = QuickAccessLayout.buttonFrame(in: card, corner: corner)
+                let button = panel.quickAccessPanel.button
+                button.settings = settings
+                button.faceScale = card.width / 224
+                button.setFrameSize(buttonFrame.size)
+                NSGraphicsContext.saveGraphicsState()
+                let shift = NSAffineTransform()
+                shift.translateX(by: buttonFrame.minX, yBy: buttonFrame.minY)
+                shift.concat()
+                button.draw(button.bounds)
+                NSGraphicsContext.restoreGraphicsState()
+                canvas.unlockFocus()
+                let png = NSBitmapImageRep(data: canvas.tiffRepresentation!)!.representation(using: .png, properties: [:])!
+                try png.write(to: URL(fileURLWithPath: "\(directory)/quick-\(appearance.rawValue)-\(corner.rawValue).png"))
+            }
+        }
     }
 
     static func renderStylePreviews(to directory: String) throws {

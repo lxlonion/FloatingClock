@@ -57,11 +57,13 @@ final class PercentageMenuView: NSView {
 
 final class MenuController: NSObject, NSMenuDelegate {
     let menu = NSMenu()
+    let quickMenu = NSMenu()
     let transparencyView = PercentageMenuView()
     private var statusItem: NSStatusItem?
     private let subtitle = NSTextField(labelWithString: "始终置顶 · 拖动表盘移动")
     private var lockItem: NSMenuItem!
     private var visibilityItem: NSMenuItem!
+    private var quickItems: [NSMenuItem] = []
     var settings: ClockSettings { didSet { refresh() } }
     var clockIsVisible = true { didSet { refresh() } }
     var onSettingsChanged: ((ClockSettings) -> Void)?
@@ -76,6 +78,15 @@ final class MenuController: NSObject, NSMenuDelegate {
         menu.autoenablesItems = false
         menu.delegate = self
         buildMenu()
+        quickMenu.autoenablesItems = false
+        quickMenu.delegate = self
+        for (title, action) in [("锁定位置", #selector(toggleLock)),
+                                ("显示分钟大字", #selector(toggleMinuteNumerals)),
+                                ("显示秒针", #selector(toggleSeconds))] {
+            let item = makeItem(title, action: action)
+            quickItems.append(item)
+            quickMenu.addItem(item)
+        }
         if includeStatusItem {
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
             let image = NSImage(systemSymbolName: "clock", accessibilityDescription: "漂浮时钟设置")
@@ -137,6 +148,11 @@ final class MenuController: NSObject, NSMenuDelegate {
         transparencyView.update(settings.transparency)
         lockItem.state = settings.isLocked ? .on : .off
         visibilityItem.state = clockIsVisible ? .on : .off
+        if quickItems.count == 3 {
+            for (item, enabled) in zip(quickItems, [settings.isLocked, settings.showsMinuteNumerals, settings.showsSeconds]) {
+                item.state = enabled ? .on : .off
+            }
+        }
         subtitle.stringValue = settings.isLocked ? "始终置顶 · 已锁定，鼠标可穿透" : "始终置顶 · 拖动表盘移动"
     }
 
@@ -148,6 +164,8 @@ final class MenuController: NSObject, NSMenuDelegate {
     }
 
     @objc private func toggleLock() { change { $0.isLocked.toggle() } }
+    @objc private func toggleSeconds() { change { $0.showsSeconds.toggle() } }
+    @objc private func toggleMinuteNumerals() { change { $0.showsMinuteNumerals.toggle() } }
     @objc private func showAdvancedSettings() { onShowAdvancedSettings?() }
     @objc private func toggleVisibility() { onToggleVisibility?() }
     @objc private func moveToCurrentScreen() { onMoveToCurrentScreen?() }

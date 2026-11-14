@@ -3,6 +3,29 @@ import CoreGraphics
 @testable import ClockCore
 
 final class ClockCoreTests: XCTestCase {
+    func testQuickAccessChoosesOppositeHorizontalCornerInEachScreenQuadrant() {
+        let screen = CGRect(x: 0, y: 25, width: 1440, height: 875)
+        for (x, y, expected) in [(40.0, 600.0, ClockCorner.topRight), (1100, 600, .topLeft),
+                                  (40, 50, .bottomRight), (1100, 50, .bottomLeft)] {
+            XCTAssertEqual(QuickAccessLayout.corner(for: CGRect(x: x, y: y, width: 248, height: 248), on: screen), expected)
+        }
+    }
+
+    func testQuickAccessUsesTheLocalDisplayOriginAndFitsEverySize() {
+        let screen = CGRect(x: -1920, y: 1080, width: 1920, height: 1080)
+        XCTAssertEqual(QuickAccessLayout.corner(for: CGRect(x: -1880, y: 1850, width: 248, height: 248), on: screen), .topRight)
+        XCTAssertEqual(QuickAccessLayout.corner(for: CGRect(x: -300, y: 1120, width: 248, height: 248), on: screen), .bottomLeft)
+        for side in [140.0, 164, 224, 284, 360] {
+            let card = CGRect(x: 12, y: 12, width: side, height: side)
+            for corner in ClockCorner.allCases {
+                let button = QuickAccessLayout.buttonFrame(in: card, corner: corner)
+                XCTAssertTrue(card.contains(button))
+                XCTAssertGreaterThanOrEqual(button.width, 18)
+                XCTAssertLessThan(button.width, side / 7)
+            }
+        }
+    }
+
     func testHandsIncludeFractionalTimeAndTwelveHourWrap() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!

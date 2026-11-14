@@ -6,6 +6,7 @@ final class ClockFaceView: NSView {
     var fixedDate: Date?
     var onDragFinished: (() -> Void)?
     var onContextMenu: ((NSEvent) -> Void)?
+    var quickAccessCorner: ClockCorner? { didSet { if oldValue != quickAccessCorner { needsDisplay = true } } }
     private var minutePathCache: (minute: String, card: CGRect, size: Double, path: CGPath)?
 
     override var acceptsFirstResponder: Bool { false }
@@ -84,9 +85,13 @@ final class ClockFaceView: NSView {
             let weekdayAttributes: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 10 * scale, weight: .medium), .foregroundColor: color
             ]
-            readout.day.draw(at: CGPoint(x: card.minX + 23 * scale, y: baseline), withAttributes: dayAttributes)
+            if quickAccessCorner != .bottomLeft {
+                readout.day.draw(at: CGPoint(x: card.minX + 23 * scale, y: baseline), withAttributes: dayAttributes)
+            }
             let weekdaySize = readout.weekday.size(withAttributes: weekdayAttributes)
-            readout.weekday.draw(at: CGPoint(x: card.maxX - 23 * scale - weekdaySize.width, y: baseline), withAttributes: weekdayAttributes)
+            if quickAccessCorner != .bottomRight {
+                readout.weekday.draw(at: CGPoint(x: card.maxX - 23 * scale - weekdaySize.width, y: baseline), withAttributes: weekdayAttributes)
+            }
         }
 
         if settings.showsMinuteNumerals {
