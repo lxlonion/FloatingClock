@@ -1,66 +1,404 @@
 # FloatingClock · 漂浮时钟
 
-macOS 原生极简指针时钟。圆角方形表盘，可拖动、始终置顶，在右上角菜单栏调整透明度、锁定位置。
+一款使用 **Swift + AppKit** 编写的 macOS 原生桌面指针时钟。圆角方形表盘可以自由拖动、悬浮置顶，支持透明度、鼠标穿透、Comic Sans MS 分钟大字，以及独立的高级设置窗口。
 
-## 开发
+![暖白外观：样式一和样式二叠加分钟大字](docs/images/dials-light.png)
 
-运行已打包的应用需要 macOS 13 或以上。当前交付版面向 Apple Silicon Mac。
+**macOS 13+ · 本地运行 · 无第三方运行依赖 · 中文界面**
 
-修改源码后重新编译需要 Xcode Command Line Tools；重新生成图标另需 Python 3。
+[快速开始](#快速开始) · [使用说明](#使用说明) · [高级设置](#高级设置) · [参数与默认值](#参数与默认值) · [技术栈](#技术栈) · [项目结构](#项目结构) · [开发与验证](#开发与验证) · [常见问题](#常见问题)
+
+## 功能概览
+
+- **悬浮置顶**：显示在普通应用窗口和浮动面板上方，不抢走键盘焦点。
+- **自由拖动**：未锁定时，按住表盘拖动；位置自动保存。
+- **整体透明度**：菜单栏实时调整，范围 0%～90%。
+- **两种表盘**：样式一使用极简刻度；样式二显示 12、3、6、9。
+- **分钟大字**：可叠加在任一表盘上，使用 Comic Sans MS，并独立调整浓度和大小。
+- **独立高级设置**：集中管理样式、外观、大小、显示内容和分钟大字。
+- **三项快捷菜单**：表盘右键只保留锁定位置、显示分钟大字、显示秒针。
+- **锁定与穿透**：锁定后，表盘区域的点击传给下层窗口，仅保留小“＋”作为快捷入口。
+- **入口自动换角**：根据时钟在当前显示器中的位置，将“＋”放在远离较近侧边的角落。
+- **多显示器恢复**：保存和恢复窗口位置；显示器断开后，将时钟移回可见区域。
+- **本地保存**：所有设置立即生效、自动保存，不需要点击单独的保存按钮。
+
+## 快速开始
+
+### 环境要求
+
+| 项目 | 要求 |
+| --- | --- |
+| 操作系统 | macOS 13 或更高版本 |
+| 已验证硬件 | Apple Silicon Mac |
+| 编译工具 | Xcode 或包含 Swift 与 macOS SDK 的 Command Line Tools |
+| Swift 工程 | Swift Package Manager，`swift-tools-version: 5.9` |
+| 第三方库 | 无 |
+| Python 3 | 仅重新生成应用图标时需要 |
+
+当前验证环境为 Apple Silicon、macOS 27.2、Swift 6.4.2。Intel Mac 尚未进行实际兼容性验证；构建脚本默认使用本机架构。
+
+### 从源码构建并启动
+
+先确认本机具备开发工具：
+
+```sh
+xcode-select -p
+swift --version
+```
+
+如果尚未安装 Command Line Tools，可先执行 `xcode-select --install`，完成系统安装提示后再继续。
+
+```sh
+git clone https://github.com/lxlonion/FloatingClock.git
+cd FloatingClock
+bash scripts/build.sh
+open dist/FloatingClock.app
+```
+
+构建后的应用位于 `dist/FloatingClock.app`。运行已构建的应用不需要再启动 Swift、Python 或其他后台服务。
+
+也可以双击项目根目录的 **启动时钟.command**：已有应用时直接启动；没有构建产物时先执行构建。
+
+> 启动后不会出现 Dock 图标，这是菜单栏应用的正常行为。请在系统右上角寻找时钟图标。
+
+构建脚本使用本地 ad-hoc 签名。仓库以源码构建为主要使用方式，未提供 Apple 开发者证书签名、公证的正式发行流程。
+
+## 使用说明
+
+### 1. 移动和安放时钟
+
+未锁定时，按住表盘拖到需要的位置即可。松开后保存位置，下次启动恢复。
+
+“时钟大小”控制表盘本身的边长；窗口外围还有少量阴影留白。改变大小时会尽量保持表盘中心，并将窗口约束在连接显示器的可见区域内。
+
+如果时钟找不到了，点击菜单栏时钟图标，选择 **移回当前屏幕**，会将它移到鼠标所在显示器的右上区域并显示出来。
+
+### 2. 菜单栏：常用控制与高级设置入口
+
+菜单栏保留一组常用操作：
+
+```text
+漂浮时钟
+├── 透明度滑块
+├── 锁定位置（鼠标穿透）
+├── 显示时钟
+├── 高级设置…
+├── 移回当前屏幕
+└── 退出漂浮时钟
+```
+
+表盘样式、外观、尺寸和分钟大字参数都已迁移到 **高级设置…**，避免菜单层级过深。
+
+全局透明度的含义是：
+
+- **0%**：整个时钟完全不透明。
+- **90%**：整个时钟最透明，仍保留少量可见度。
+- 默认 **20%**，拖动滑块立即生效。
+
+### 3. 表盘右键：三项快捷设置
+
+未锁定时，右键点击表盘，只出现下面三项：
+
+```text
+锁定位置
+显示分钟大字
+显示秒针
+```
+
+这些开关与菜单栏、高级设置窗口使用同一份设置，状态会同步更新。
+
+这里的“显示秒针”控制指针式秒针，并不是独立的秒表计时功能。
+
+### 4. 锁定、鼠标穿透与小“＋”入口
+
+启用锁定后，表盘不再响应拖动或右键，点击会传给底下的窗口。小“＋”是独立的可点击区域，可以打开同样的三项快捷菜单，并取消勾选“锁定位置”来解锁。
+
+入口的字形大小接近底部日期，按当前显示器的四个象限自动放置：
+
+| 时钟所在区域 | “＋”入口所在位置 |
+| --- | --- |
+| 左上区域 | 表盘右上角 |
+| 右上区域 | 表盘左上角 |
+| 左下区域 | 表盘右下日期栏 |
+| 右下区域 | 表盘左下日期栏 |
+
+上方入口与底部入口示例：
+
+<p>
+  <img src='docs/images/quick-access-top-right.png' alt='右上角的加号快捷入口' width='300'>
+  <img src='docs/images/quick-access-bottom-left.png' alt='左下日期栏中的加号快捷入口' width='300'>
+</p>
+
+底部入口会暂时让出对应的日期或星期文字位置，解锁后恢复文字。隐藏时钟时入口也会隐藏；整体透明度较高时，入口会保留足够的可见度。
+
+## 高级设置
+
+点击 **菜单栏时钟图标 → 高级设置…**，打开独立设置窗口。
+
+<img src='docs/images/advanced-settings.png' alt='高级设置：表盘、显示内容、分钟大字浓度与大小' width='500'>
+
+图中为已开启分钟大字的示例配置。所有控件的修改都会立即应用到时钟并保存；“完成”用于关闭窗口，不需要额外点击保存。关闭窗口不会退出时钟，再次打开会显示当前设置。
+
+### 表盘样式
+
+<table>
+  <tr><th>样式一 · 极简刻度</th><th>样式二 · 数字刻度</th></tr>
+  <tr>
+    <td><img src='docs/images/minimal-dial.png' alt='没有数字的极简刻度表盘' width='280'></td>
+    <td><img src='docs/images/numbered-dial.png' alt='显示12、3、6、9的表盘' width='280'></td>
+  </tr>
+</table>
+
+分钟大字是两个表盘共用的叠加选项，不是第三种表盘。
+
+### 外观与尺寸
+
+- **暖白**：浅色表盘、深色指针，搭配橙色秒针。
+- **墨黑**：深色表盘、浅色指针。
+- **跟随系统**：随系统浅色或深色外观切换。
+- **时钟大小**：140～360 连续调节，默认 224。
+
+深色示例：
+
+![墨黑外观下的两个表盘与分钟大字](docs/images/dials-dark.png)
+
+### 日期和秒针
+
+- “显示秒针”控制秒针是否绘制。
+- “显示日期与星期”控制左下角的当天几号和右下角的周几。
+- 不显示月份，日期随系统本地时间更新。
+- 日期开关与分钟大字开关相互独立。
+
+### 分钟大字
+
+开启 **显示分钟大字** 后，可调整：
+
+| 控件 | 作用 |
+| --- | --- |
+| 大字浓度 | 0%～100%，数值越高颜色越深，只影响分钟数字 |
+| 大字大小 | 40%～100%，相对于表盘内可用空间缩放 |
+
+数字使用 **Comic Sans MS**。当系统没有该字体时，代码会回退到系统字体；仓库不分发字体文件。
+
+数字以实际字形轮廓居中，与时针、分针的原点对齐。指针绘制在大字上方；100% 大小时，数字仍留在刻度圈内，保留小间隙。个位分钟补零，例如 `00`、`05`、`09`。
+
+关闭分钟大字后，浓度和大小控件会变灰，已有数值会保留；重新开启后恢复可调。
+
+<details>
+<summary>查看关闭分钟大字时的高级设置界面</summary>
+
+<img src='docs/images/advanced-settings-disabled.png' alt='分钟大字关闭后，浓度和大小控件变灰' width='500'>
+
+</details>
+
+## 参数与默认值
+
+| 设置 | 范围 / 选项 | 新安装默认值 | 调整位置 |
+| --- | --- | --- | --- |
+| 全局透明度 | 0%～90% | 20% | 菜单栏 |
+| 锁定位置 | 开 / 关 | 关 | 菜单栏、快捷菜单 |
+| 表盘样式 | 样式一 / 样式二 | 样式一 | 高级设置 |
+| 表盘外观 | 暖白 / 墨黑 / 跟随系统 | 暖白 | 高级设置 |
+| 表盘大小 | 140～360 points | 224 | 高级设置 |
+| 显示秒针 | 开 / 关 | 开 | 高级设置、快捷菜单 |
+| 显示日期与星期 | 开 / 关 | 开 | 高级设置 |
+| 显示分钟大字 | 开 / 关 | 关 | 高级设置、快捷菜单 |
+| 大字浓度 | 0%～100% | 40% | 高级设置 |
+| 大字大小 | 40%～100% | 100% | 高级设置 |
+
+“全局透明度”越大，整个时钟越透明；“大字浓度”越大，分钟数字越深，两者方向不同。全局透明度作用于整个窗口，大字浓度只改变数字这一层。
+
+升级会保留既有设置。旧版保存的 `style3` 会迁移成“样式一 + 分钟大字”，缺失的大字大小字段使用 100%，避免升级后突然缩小。
+
+## 技术栈
+
+| 技术 | 在项目中的用途 |
+| --- | --- |
+| Swift | 应用逻辑、窗口控制、绘制、数据模型与测试 |
+| Swift Package Manager | 模块组织、构建可执行文件和运行测试 |
+| AppKit / Cocoa | `NSPanel` 漂浮窗口、`NSStatusItem` 菜单栏、`NSMenu` 菜单与原生控件 |
+| NSWindowController、Auto Layout、NSStackView | 构建和管理独立高级设置窗口 |
+| NSBezierPath / Core Graphics | 表盘、刻度、指针、圆角和阴影绘制 |
+| Core Text | 提取 Comic Sans MS 数字轮廓，实现按实际字形居中与缩放 |
+| Foundation | `Date`、`Calendar`、`Timer`、`Codable` 与本地设置 |
+| UserDefaults | 保存表盘偏好与位置 |
+| XCTest | 核心逻辑、偏好迁移和布局测试 |
+| Shell、Info.plist、codesign | 将 Swift 可执行文件打包为本地签名的 `.app` |
+
+应用直接使用系统原生界面与绘图 API，没有第三方运行依赖。
+
+### 窗口与穿透实现
+
+`ClockPanel` 使用无边框、非激活的 `NSPanel`。窗口层级设在普通应用窗口之上、系统弹出菜单之下，并配置跨桌面和全屏辅助窗口行为。
+
+锁定时将主表盘窗口的 `ignoresMouseEvents` 设为 `true`。小“＋”由单独的 `QuickAccessPanel` 承载，它只覆盖很小的按钮区域，继续接收鼠标输入，并跟随父窗口移动。
+
+这样，主表盘真正穿透鼠标，同时保留一个可解锁的入口，不需要全局鼠标监听。
+
+### 状态同步
+
+```mermaid
+flowchart LR
+    Menu[菜单栏] --> Apply[AppDelegate 应用设置]
+    Advanced[高级设置窗口] --> Apply
+    Quick[三项快捷菜单] --> Apply
+    Apply --> Panel[更新表盘与入口]
+    Panel --> Persist[SettingsStore 自动保存]
+    Persist --> Refresh[刷新菜单与高级设置]
+```
+
+`ClockSettings` 是共享的数据模型。各入口产生修改后交给 `AppDelegate` 应用；位置保存回调会保存最新状态，并刷新菜单和已打开的高级设置窗口。控件刷新不会再次触发修改回调。
+
+### 绘制与刷新
+
+- 根据当前系统时间计算指针角度，时针和分针包含分钟、秒的小数部分。
+- 开启秒针时约以 30 Hz 请求重绘；关闭秒针时约每秒刷新一次。
+- 隐藏时钟会停止绘制定时器，重新显示后恢复。
+- 分钟数字的原始字形轮廓会缓存；当前分钟、表盘尺寸或大字大小改变时更新绘制路径。
+- 表盘位置与“＋”入口布局以当前显示器为参照，支持负坐标显示器。
+
+## 项目结构
+
+```text
+FloatingClock/
+├── Package.swift
+├── README.md
+├── Sources/
+│   ├── ClockCore/
+│   │   ├── ClockSettings.swift          # 设置模型、兼容迁移与保存
+│   │   ├── ClockGeometry.swift          # 指针角度与窗口边界
+│   │   ├── ClockReadout.swift           # 几号、星期、分钟文本
+│   │   └── QuickAccessLayout.swift      # 加号入口的自动换角与尺寸
+│   └── FloatingClock/
+│       ├── main.swift                  # 应用生命周期和状态协调
+│       ├── ClockPanel.swift            # 漂浮窗口、穿透、显示与隐藏
+│       ├── ClockFaceView.swift         # 表盘与指针绘制
+│       ├── MinuteNumerals.swift        # 分钟数字字形与缩放
+│       ├── MenuController.swift        # 菜单栏和三项快捷菜单
+│       ├── AdvancedSettingsWindowController.swift
+│       ├── QuickAccessPanel.swift      # 可点击的小加号窗口
+│       └── RuntimeChecks.swift         # 原生检查与文档预览生成
+├── Tests/ClockCoreTests/
+├── Resources/
+│   ├── Info.plist
+│   └── AppIcon.icns
+├── docs/images/                        # README 使用的图片
+├── scripts/
+│   ├── build.sh
+│   ├── test.sh
+│   ├── render-docs.sh
+│   ├── regenerate-icon.sh
+│   └── generate-icon.swift
+└── 启动时钟.command
+```
+
+`.build/`、`dist/` 和 `work/` 分别用于编译缓存、应用构建产物和临时文件，均已排除在 Git 提交之外。
+
+## 开发与验证
+
+### 构建应用
 
 ```sh
 bash scripts/build.sh
-open dist/FloatingClock.app
-bash scripts/test.sh
-dist/FloatingClock.app/Contents/MacOS/FloatingClock --smoke-test
 ```
 
-应用仅在本地运行，不联网，不需要辅助功能或屏幕录制权限。
+构建脚本将缓存放在工程的 `.build/` 下，产物放在 `dist/FloatingClock.app`。可以用环境变量指定其他输出目录，例如在不覆盖已安装时钟的情况下构建：
 
-## 使用
+```sh
+FLOATING_CLOCK_OUTPUT_DIR="$PWD/work/test-build" bash scripts/build.sh
+```
 
-- 双击 `dist/FloatingClock.app`。应用不显示 Dock 图标，右上角菜单栏有一个时钟图标。
-- 按住表盘拖动。位置会自动保存，下次启动会恢复。
-- 点击菜单栏时钟图标，拖动透明度滑块实时调整，精度为 1%。0% 完全不透明，90% 最透明，默认 20%。透明度影响整个时钟。
-- 选择“锁定位置（鼠标穿透）”后，底下的窗口可正常点击；只有小“＋”快捷入口接收点击。可点击“＋”打开快捷菜单解锁，也可从菜单栏解锁。
-- 菜单保留透明度滑块、锁定位置、显示/隐藏、移回当前屏幕、退出和“高级设置…”入口。
-- 点击“高级设置…”会打开独立窗口，集中调整表盘样式、外观、时钟大小、秒针、日期和分钟大字。调整立即生效并自动保存，关闭后可随时重新打开。
-- 高级设置中的时钟大小可以在 140～360 之间连续调整；外观可选暖白、墨黑或跟随系统。
-- “样式”保留样式一（极简刻度）和样式二（12、3、6、9 数字）。
-- 独立的“显示分钟大字”开关可以叠加在任一表盘上。大字使用 Comic Sans MS，实际字符轮廓中心与指针原点对齐，指针位于大字上方。
-- 高级设置中的“大字浓度”可调 0%～100%，默认 40%，只改变大字，不改变整个时钟的透明度。“大字大小”可调 40%～100%，100% 对应原有大小，最大时仍保留刻度内侧的空隙。关闭大字后这两个控件变灰，所选数值会保留。
-- 旧版样式三自动迁移成“样式一 + 分钟大字”；旧版样式一、二不会自动启用大字。
-- 日期只显示当天几号，位于左下角；星期几（例如“周六”）位于右下角，均不显示月份。“显示日期”控制这两项，不影响分钟大字。
-- “移回当前屏幕”能找回移动到其他显示器上的时钟。拔掉外接屏幕时会自动移回可见区域。
-- 未锁定时右键点击表盘，打开三项快捷设置：锁定位置、显示分钟大字、显示秒针；与菜单栏及高级设置实时同步。
-- 锁定时的小“＋”与日期文字大小相近，根据当前显示器上的位置自动换角：时钟在左上时入口在右上，在右上时入口在左上；在左下时入口在右下日期栏，在右下时入口在左下日期栏。
-- 底部“＋”暂时占用对应的日期/星期位置，解锁后文字恢复。隐藏时钟会同时隐藏入口；高透明度时入口仍保留可见度。
-- 退出请使用菜单栏中的“退出漂浮时钟”。
-- 项目根目录的“启动时钟.command”可以重新启动应用，首次运行后会继续使用上次保存的位置和设置。
+`FLOATING_CLOCK_BUILD_DIR` 可以另外指定 Swift 构建缓存目录。
 
-时钟使用不抢焦点的原生 NSPanel，在普通应用与浮动窗口上方显示，并配置了全部桌面和全屏辅助窗口行为。macOS 锁屏、安全界面及系统菜单由系统管理，不承诺覆盖这些界面。
+### 运行测试
 
-设置保存在用户偏好域 `local.lian.FloatingClock`，无需额外服务或权限。项目没有第三方依赖。
+```sh
+# XCTest 核心逻辑测试
+bash scripts/test.sh
 
-## 工程记录
+# 原生 AppKit 集成检查，需要可用的 macOS 图形会话
+./dist/FloatingClock.app/Contents/MacOS/FloatingClock --smoke-test
+```
 
-本地 Git 按基础工程、时钟实现、菜单栏设置、验证交付分别提交。
+原生检查会短暂显示测试窗口，使用独立的临时 UserDefaults 域，完成后清理测试偏好；不会写入用户实际的时钟设置。
 
-## 验证
+当前合并版本已通过 **14 项核心测试、55 项原生检查**。覆盖内容包括：
 
-- 核心测试覆盖时间计算、偏好迁移、大字浓度与大小的保存和边界，以及快捷入口在不同屏幕位置与大小下的布局。
-- AppKit 检查覆盖高级设置窗口、实时调整与保存、大字缩放与居中、三项快捷菜单及其状态同步、锁定/解锁和入口四角跟随。
-- 原生 WindowServer 命中测试检查：锁定时表盘中央的点击穿透到底下窗口，“＋”区域仍命中独立的快捷入口。
-- 应用通过本地 ad-hoc 签名完整性检查。构建脚本将缓存留在工程的 `.build` 中。
+- 时间计算、设置边界、保存和旧版迁移。
+- 高级设置窗口打开、关闭和复用。
+- 样式、外观、表盘大小、大字浓度与大小的实时应用。
+- 大字关闭时控件禁用、重新开启时恢复原值。
+- 快捷菜单与高级设置双向同步。
+- 数字缩放比例与中心位置。
+- 四角入口、隐藏联动、解锁后入口消失。
+- WindowServer 实际命中测试：主表盘穿透，只有小“＋”仍接收点击。
 
-可用 `bash scripts/regenerate-icon.sh` 重建图标。运行时不需要 Swift、Python 或第三方依赖。未设置开机自启动。
+### 重新生成文档图片
 
-可用 `dist/FloatingClock.app/Contents/MacOS/FloatingClock --render-style-previews /tmp/FloatingClock-previews` 输出两个表盘在不同大小、外观、大字开关和浓度下的预览，示例固定为 14 日、周六、15 分，并补充 00、11、58 的边界排版。
+```sh
+bash scripts/render-docs.sh
+```
 
-可用 `dist/FloatingClock.app/Contents/MacOS/FloatingClock --render-quick-previews /tmp/FloatingClock-quick-previews` 输出浅深色下四个快捷入口位置的预览。
+该脚本会构建到 `work/documentation-build/`，将中间预览写入 `work/documentation-previews/`，再复制文档使用的 8 张图片到 `docs/images/`。不会覆盖 `dist/` 中的已安装应用，也不会更改用户设置。
 
-## Apple 文档
+这些图片直接由当前版本的 AppKit 界面和绘制代码生成；示例时钟时间固定为 10:15、日期为 14 日周六，不包含个人桌面内容。
 
-- [NSPanel 的非激活窗口](https://developer.apple.com/documentation/appkit/nswindow/stylemask-swift.struct/nonactivatingpanel)
-- [跨全屏空间显示](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct/fullscreenauxiliary)
+也可以单独生成更完整的预览：
+
+```sh
+./dist/FloatingClock.app/Contents/MacOS/FloatingClock --render-style-previews /tmp/FloatingClock-styles
+./dist/FloatingClock.app/Contents/MacOS/FloatingClock --render-quick-previews /tmp/FloatingClock-corners
+```
+
+重新生成应用图标使用 `bash scripts/regenerate-icon.sh`，该步骤需要 Python 3。
+
+## 本地数据与隐私
+
+- 应用运行时不联网，不包含账户登录、远程接口或遥测代码。
+- 偏好通过 `Codable` 编码后保存在 `UserDefaults`。
+- 用户偏好域为 `local.lian.FloatingClock`，数据键为 `FloatingClock.settings.v1`。
+- 设置包含表盘样式、外观、透明度、尺寸、显示开关、分钟大字参数和窗口位置。
+- 普通使用不需要辅助功能或屏幕录制权限。
+- Comic Sans MS 使用本机字体，仓库不包含字体二进制文件。
+
+## 常见问题
+
+### 为什么找不到 Dock 图标或普通主窗口？
+
+这是菜单栏应用。控制入口在右上角的时钟图标；表盘使用不会抢走键盘焦点的非激活窗口，高级设置则是可以正常聚焦的独立窗口。
+
+### 锁定后无法拖动、右键没有反应？
+
+这是鼠标穿透的预期行为。点击表盘角落的“＋”，取消勾选“锁定位置”；也可以从菜单栏解锁。
+
+### 大字浓度和大小为什么不能拖动？
+
+先在高级设置中开启“显示分钟大字”。关闭时这两个控件会变灰，数值仍保留。
+
+### 为什么修改大字浓度后，整个时钟没有一起变透明？
+
+大字浓度仅作用于分钟数字。整个时钟的透明度在菜单栏单独调整。
+
+### 日期为什么暂时少了一边？
+
+锁定且入口在底部时，“＋”会占用那一侧的日期栏位置。解锁后对应文字会恢复，日期开关本身没有改变。
+
+### 拔掉显示器之后，时钟不见了怎么办？
+
+先确认菜单栏中的“显示时钟”已开启，再选择“移回当前屏幕”。程序也会在显示器配置变化时尝试将表盘移回可见区域。
+
+### 是否支持开机自启动、闹钟或计时？
+
+当前没有实现这些功能；它用于显示本地时间。“显示秒针”只切换指针式秒针。
+
+### 能否保证覆盖所有系统界面？
+
+置顶针对普通应用窗口和浮动面板，并配置了跨桌面、全屏辅助窗口行为。锁屏、安全界面和系统菜单由 macOS 管理；没有逐一验证所有第三方应用的独占全屏模式。
+
+## 参考文档
+
+- [Apple AppKit](https://developer.apple.com/documentation/appkit)
+- [非激活 NSPanel](https://developer.apple.com/documentation/appkit/nswindow/stylemask-swift.struct/nonactivatingpanel)
 - [NSStatusItem 菜单栏入口](https://developer.apple.com/documentation/appkit/nsstatusitem)
+- [窗口鼠标穿透](https://developer.apple.com/documentation/appkit/nswindow/ignoresmouseevents)
+- [Core Text](https://developer.apple.com/documentation/coretext)
