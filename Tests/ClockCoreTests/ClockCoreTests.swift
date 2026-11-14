@@ -50,6 +50,45 @@ final class ClockCoreTests: XCTestCase {
         XCTAssertEqual(origin, CGPoint(x: -1800, y: 100))
     }
 
+    func testUpdatingLegacyPreferencesPreservesUserSettings() throws {
+        let data = Data(#"{"transparency":63,"faceSize":284,"appearance":"dark","isLocked":true,"showsSeconds":false,"showsDate":false,"origin":{"x":-1000,"y":80}}"#.utf8)
+        let settings = try JSONDecoder().decode(ClockSettings.self, from: data)
+        XCTAssertEqual(settings.style, .minimal)
+        XCTAssertEqual(settings.transparency, 63)
+        XCTAssertEqual(settings.faceSize, 284)
+        XCTAssertEqual(settings.appearance, .dark)
+        XCTAssertTrue(settings.isLocked)
+        XCTAssertFalse(settings.showsSeconds)
+        XCTAssertFalse(settings.showsDate)
+        XCTAssertEqual(settings.origin, StoredPoint(x: -1000, y: 80))
+    }
+
+    func testEveryStylePersistsAcrossRelaunch() {
+        let suite = "FloatingClock.styles.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        for style in ClockStyle.allCases {
+            var settings = ClockSettings()
+            settings.style = style
+            SettingsStore(defaults: defaults).save(settings)
+            XCTAssertEqual(SettingsStore(defaults: defaults).load().style, style)
+        }
+    }
+
+    func testDayWeekdayAndMinuteFollowLocalMidnight() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600)!
+        let formatter = ISO8601DateFormatter()
+        let saturday = ClockReadout(date: formatter.date(from: "2026-11-14T10:15:36+08:00")!, calendar: calendar)
+        XCTAssertEqual(saturday.day, "14")
+        XCTAssertEqual(saturday.weekday, "周六")
+        XCTAssertEqual(saturday.minute, "15")
+        let sunday = ClockReadout(date: formatter.date(from: "2026-11-14T16:00:00Z")!, calendar: calendar)
+        XCTAssertEqual(sunday.day, "15")
+        XCTAssertEqual(sunday.weekday, "周日")
+        XCTAssertEqual(sunday.minute, "00")
+    }
+
     func testDisconnectedDisplayRecoversClockInsideVisibleFrame() {
         let screen = CGRect(x: 0, y: 25, width: 1440, height: 850)
         let origin = ClockLayout.clampedOrigin(CGPoint(x: -1800, y: 1500), size: 248, screens: [screen])

@@ -6,12 +6,6 @@ final class ClockFaceView: NSView {
     var fixedDate: Date?
     var onDragFinished: (() -> Void)?
     var onContextMenu: ((NSEvent) -> Void)?
-    private let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "M月d日  EEE"
-        return formatter
-    }()
 
     override var acceptsFirstResponder: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -61,6 +55,7 @@ final class ClockFaceView: NSView {
         cardPath.stroke()
 
         for index in 0..<60 {
+            if settings.style == .cardinalNumbers && [0, 1, 14].contains(index % 15) { continue }
             let major = index % 5 == 0
             let angle = Double(index) / 60 * 2 * .pi
             let radius = card.width * 0.402
@@ -70,17 +65,32 @@ final class ClockFaceView: NSView {
                    color: ink.withAlphaComponent(major ? 0.72 : 0.19))
         }
 
+        if settings.style == .cardinalNumbers {
+            for (number, index) in [("12", 0), ("3", 15), ("6", 30), ("9", 45)] {
+                drawCentered(number, at: point(center, card.width * 0.363, Double(index) / 60 * 2 * .pi),
+                             font: .systemFont(ofSize: 18 * scale, weight: .regular), color: ink.withAlphaComponent(0.82))
+            }
+        }
+
         let now = fixedDate ?? Date()
+        let readout = ClockReadout(date: now)
         if settings.showsDate {
-            dateFormatter.timeZone = .current
-            let text = dateFormatter.string(from: now)
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 10 * scale, weight: .medium),
-                .foregroundColor: ink.withAlphaComponent(0.46),
-                .kern: 0.4 * scale
+            let baseline = card.minY + 16 * scale
+            let color = ink.withAlphaComponent(0.54)
+            let dayAttributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 11 * scale, weight: .medium), .foregroundColor: color
             ]
-            let size = text.size(withAttributes: attributes)
-            text.draw(at: CGPoint(x: center.x - size.width / 2, y: center.y - 43 * scale - size.height / 2), withAttributes: attributes)
+            let weekdayAttributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 10 * scale, weight: .medium), .foregroundColor: color
+            ]
+            readout.day.draw(at: CGPoint(x: card.minX + 23 * scale, y: baseline), withAttributes: dayAttributes)
+            let weekdaySize = readout.weekday.size(withAttributes: weekdayAttributes)
+            readout.weekday.draw(at: CGPoint(x: card.maxX - 23 * scale - weekdaySize.width, y: baseline), withAttributes: weekdayAttributes)
+        }
+
+        if settings.style == .minuteReadout {
+            drawCentered(readout.minute, at: CGPoint(x: center.x, y: center.y - 53 * scale),
+                         font: .monospacedDigitSystemFont(ofSize: 28 * scale, weight: .regular), color: ink.withAlphaComponent(0.65))
         }
 
         let angles = ClockAngles(date: now)
@@ -92,6 +102,12 @@ final class ClockFaceView: NSView {
         let hubRadius: CGFloat = (settings.showsSeconds ? 4 : 3.5) * scale
         (settings.showsSeconds ? accent : ink).setFill()
         NSBezierPath(ovalIn: CGRect(x: center.x - hubRadius, y: center.y - hubRadius, width: 2 * hubRadius, height: 2 * hubRadius)).fill()
+    }
+
+    private func drawCentered(_ text: String, at center: CGPoint, font: NSFont, color: NSColor) {
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+        let size = text.size(withAttributes: attributes)
+        text.draw(at: CGPoint(x: center.x - size.width / 2, y: center.y - size.height / 2), withAttributes: attributes)
     }
 
     private func point(_ center: CGPoint, _ radius: CGFloat, _ angle: Double) -> CGPoint {

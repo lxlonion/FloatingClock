@@ -60,6 +60,7 @@ final class MenuController: NSObject, NSMenuDelegate {
     private var secondsItem: NSMenuItem!
     private var dateItem: NSMenuItem!
     private var sizeItems: [NSMenuItem] = []
+    private var styleItems: [NSMenuItem] = []
     private var appearanceItems: [NSMenuItem] = []
     private var presetItems: [NSMenuItem] = []
     var settings: ClockSettings { didSet { refresh() } }
@@ -125,6 +126,17 @@ final class MenuController: NSObject, NSMenuDelegate {
         visibilityItem = makeItem("显示时钟", action: #selector(toggleVisibility))
         menu.addItem(visibilityItem)
         menu.addItem(.separator())
+        let styleItem = NSMenuItem(title: "表盘样式", action: nil, keyEquivalent: "")
+        let styleMenu = NSMenu()
+        styleMenu.autoenablesItems = false
+        for (index, style) in ClockStyle.allCases.enumerated() {
+            let item = makeItem(style.menuTitle, action: #selector(setStyle(_:)))
+            item.tag = index
+            styleItems.append(item)
+            styleMenu.addItem(item)
+        }
+        styleItem.submenu = styleMenu
+        menu.addItem(styleItem)
         let sizeItem = NSMenuItem(title: "时钟大小", action: nil, keyEquivalent: "")
         let sizeMenu = NSMenu()
         sizeMenu.autoenablesItems = false
@@ -175,6 +187,7 @@ final class MenuController: NSObject, NSMenuDelegate {
         subtitle.stringValue = settings.isLocked ? "始终置顶 · 已锁定，鼠标可穿透" : "始终置顶 · 拖动表盘移动"
         for item in presetItems { item.state = Double(item.tag) == settings.transparency ? .on : .off }
         for item in sizeItems { item.state = Double(item.tag) == settings.faceSize ? .on : .off }
+        for item in styleItems { item.state = ClockStyle.allCases[item.tag] == settings.style ? .on : .off }
         for item in appearanceItems { item.state = ClockAppearance.allCases[item.tag] == settings.appearance ? .on : .off }
     }
 
@@ -187,6 +200,7 @@ final class MenuController: NSObject, NSMenuDelegate {
 
     @objc private func setPreset(_ item: NSMenuItem) { change { $0.transparency = Double(item.tag) } }
     @objc private func setSize(_ item: NSMenuItem) { change { $0.faceSize = Double(item.tag) } }
+    @objc private func setStyle(_ item: NSMenuItem) { change { $0.style = ClockStyle.allCases[item.tag] } }
     @objc private func setAppearance(_ item: NSMenuItem) { change { $0.appearance = ClockAppearance.allCases[item.tag] } }
     @objc private func toggleLock() { change { $0.isLocked.toggle() } }
     @objc private func toggleSeconds() { change { $0.showsSeconds.toggle() } }
