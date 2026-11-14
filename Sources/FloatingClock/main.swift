@@ -72,6 +72,15 @@ application.setActivationPolicy(.accessory)
 if CommandLine.arguments.contains("--smoke-test") {
     exit(RuntimeChecks.run())
 }
+if let index = CommandLine.arguments.firstIndex(of: "--render-style-previews"), CommandLine.arguments.count > index + 1 {
+    do {
+        try RuntimeChecks.renderStylePreviews(to: CommandLine.arguments[index + 1])
+        exit(0)
+    } catch {
+        fputs("Style previews failed: \(error)\n", stderr)
+        exit(1)
+    }
+}
 if let index = CommandLine.arguments.firstIndex(of: "--render-preview"), CommandLine.arguments.count > index + 1 {
     do {
         try RuntimeChecks.renderPreview(to: CommandLine.arguments[index + 1])

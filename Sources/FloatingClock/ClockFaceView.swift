@@ -67,7 +67,7 @@ final class ClockFaceView: NSView {
 
         if settings.style == .cardinalNumbers {
             for (number, index) in [("12", 0), ("3", 15), ("6", 30), ("9", 45)] {
-                drawCentered(number, at: point(center, card.width * 0.363, Double(index) / 60 * 2 * .pi),
+                drawCentered(number, at: point(center, card.width * 0.393, Double(index) / 60 * 2 * .pi),
                              font: .systemFont(ofSize: 18 * scale, weight: .regular), color: ink.withAlphaComponent(0.82))
             }
         }
