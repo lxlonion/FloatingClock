@@ -51,14 +51,14 @@ enum MinuteNumerals {
         return radius
     }
 
-    static func path(for minute: String, in card: CGRect) -> CGPath? {
+    static func path(for minute: String, in card: CGRect, size: Double = 100) -> CGPath? {
         guard let shape = outlines[minute], shape.radius > 0 else { return nil }
         let outline = shape.path
         let bounds = outline.boundingBoxOfPath
         let scale = card.width / 224
         // The major ticks begin at outerRadius - 9; leave a small gap inside them.
         let availableRadius = card.width * 0.402 - 14 * scale
-        let factor = availableRadius / shape.radius
+        let factor = availableRadius / shape.radius * CGFloat(size / 100)
         var transform = CGAffineTransform(a: factor, b: 0, c: 0, d: factor,
                                          tx: card.midX - bounds.midX * factor,
                                          ty: card.midY - bounds.midY * factor)

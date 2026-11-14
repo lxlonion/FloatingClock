@@ -10,6 +10,8 @@ enum RuntimeChecks {
         let store = SettingsStore(defaults: defaults)
         let panel = ClockPanel(settings: ClockSettings())
         let controller = MenuController(settings: ClockSettings(), includeStatusItem: false)
+        let advanced = AdvancedSettingsWindowController(settings: ClockSettings())
+        defer { advanced.close() }
         var checks: [String] = []
         var failures: [String] = []
         func check(_ condition: Bool, _ name: String) {
@@ -19,7 +21,14 @@ enum RuntimeChecks {
         controller.onSettingsChanged = { value in
             panel.apply(value)
             store.save(value)
+            advanced.settings = value
         }
+        advanced.onSettingsChanged = { value in
+            controller.settings = value
+            panel.apply(value)
+            store.save(value)
+        }
+        controller.onShowAdvancedSettings = { advanced.showSettings() }
         check(panel.level.rawValue == NSWindow.Level.popUpMenu.rawValue - 1, "above app windows, below system menus")
         check(panel.collectionBehavior.contains([.canJoinAllSpaces, .fullScreenAuxiliary, .canJoinAllApplications]), "all Spaces and fullscreen flags")
         check(!panel.canBecomeKey && !panel.canBecomeMain && !panel.hidesOnDeactivate, "does not steal keyboard focus")
@@ -37,64 +46,91 @@ enum RuntimeChecks {
             check(!panel.ignoresMouseEvents, "menu remains able to unlock")
         } else { check(false, "lock menu exists") }
 
-        if let submenu = controller.menu.items.first(where: { $0.title == "时钟大小" })?.submenu,
-           let index = submenu.items.firstIndex(where: { $0.tag == 284 }) {
-            submenu.performActionForItem(at: index)
-            check(abs(panel.frame.width - 308) < 0.001, "size menu resizes panel")
-            check(NSScreen.screens.contains { $0.visibleFrame.contains(panel.frame) }, "resized panel remains on screen")
-        } else { check(false, "size menu exists") }
+        check(controller.menu.items.allSatisfy { $0.submenu == nil }, "compact menu has no secondary submenus")
+        check(controller.menu.items.filter { $0.action != nil }.count == 5,
+              "compact menu retains only lock, visibility, advanced settings, screen recovery, and quit")
+        if let index = controller.menu.items.firstIndex(where: { $0.title == "高级设置…" }) {
+            controller.menu.performActionForItem(at: index)
+            check(advanced.window?.isVisible == true && advanced.window?.canBecomeKey == true,
+                  "advanced menu opens a separate focusable settings window")
+            let window = advanced.window
+            advanced.close()
+            check(advanced.window?.isVisible == false, "closing settings leaves clock controls alive")
+            controller.menu.performActionForItem(at: index)
+            controller.menu.performActionForItem(at: index)
+            check(advanced.window === window && advanced.window?.isVisible == true,
+                  "reopening and repeated selection reuse the same settings window")
+        } else { check(false, "advanced settings menu exists") }
 
-        if let index = controller.menu.items.firstIndex(where: { $0.title == "显示秒针" }) {
-            controller.menu.performActionForItem(at: index)
-            check(!panel.face.settings.showsSeconds, "seconds menu reaches rendered face")
+        let sizeSlider = advanced.faceSizeRow.slider
+        sizeSlider.doubleValue = 284
+        _ = sizeSlider.sendAction(sizeSlider.action, to: sizeSlider.target)
+        check(abs(panel.frame.width - 308) < 0.001 && store.load().faceSize == 284,
+              "advanced size slider resizes the panel and persists")
+        check(NSScreen.screens.contains { $0.visibleFrame.contains(panel.frame) }, "resized panel remains on screen")
+        advanced.secondsButton.performClick(nil)
+        check(!panel.face.settings.showsSeconds && !store.load().showsSeconds,
+              "advanced seconds toggle reaches rendered face and preferences")
+        check(controller.quickMenu.items[2].state == .off,
+              "advanced seconds toggle updates the quick menu")
+        check(advanced.stylePopup.numberOfItems == 2, "advanced style picker contains both dials")
+        for (index, style) in ClockStyle.allCases.enumerated() {
+            advanced.stylePopup.selectItem(at: index)
+            _ = advanced.stylePopup.sendAction(advanced.stylePopup.action, to: advanced.stylePopup.target)
+            check(panel.face.settings.style == style && store.load().style == style,
+                  "\(style.rawValue) advanced picker updates face and preferences")
         }
-        if let submenu = controller.menu.items.first(where: { $0.title == "表盘样式" })?.submenu {
-            check(submenu.items.count == 2, "dial menu contains only styles one and two")
-            for (index, style) in ClockStyle.allCases.enumerated() {
-                submenu.performActionForItem(at: index)
-                check(panel.face.settings.style == style && store.load().style == style &&
-                      submenu.items[index].state == .on && submenu.items.filter { $0.state == .on }.count == 1,
-                      "\(style.rawValue) menu updates face, saved selection, and checkmark")
-            }
-        } else { check(false, "style menu exists") }
+        for (index, appearance) in ClockAppearance.allCases.enumerated() {
+            advanced.appearancePopup.selectItem(at: index)
+            _ = advanced.appearancePopup.sendAction(advanced.appearancePopup.action, to: advanced.appearancePopup.target)
+            check(panel.face.settings.appearance == appearance && store.load().appearance == appearance,
+                  "\(appearance.rawValue) advanced appearance persists")
+        }
         check(MinuteNumerals.font.familyName == "Comic Sans MS", "minute numerals use Comic Sans MS")
-        let opacityItem = controller.menu.items.first {
-            $0.submenu?.items.contains(where: { $0.view === controller.minuteOpacityView }) == true
+        check(!advanced.minuteOpacityRow.slider.isEnabled && !advanced.minuteSizeRow.slider.isEnabled,
+              "minute details are disabled while the layer is off")
+        advanced.minuteNumeralsButton.performClick(nil)
+        check(advanced.minuteOpacityRow.slider.isEnabled && advanced.minuteSizeRow.slider.isEnabled && panel.face.settings.showsMinuteNumerals,
+              "enabling minute numerals enables their detailed controls")
+        check(controller.quickMenu.items[1].state == .on,
+              "advanced minute toggle updates the quick menu")
+        let windowAlpha = panel.alphaValue
+        let minuteSlider = advanced.minuteOpacityRow.slider
+        minuteSlider.doubleValue = 67
+        _ = minuteSlider.sendAction(minuteSlider.action, to: minuteSlider.target)
+        check(abs(panel.face.settings.minuteNumeralAlpha - 0.67) < 0.001,
+              "advanced concentration slider updates the rendered layer")
+        check(panel.alphaValue == windowAlpha, "minute concentration leaves window transparency unchanged")
+        let minuteSizeSlider = advanced.minuteSizeRow.slider
+        minuteSizeSlider.doubleValue = 65
+        _ = minuteSizeSlider.sendAction(minuteSizeSlider.action, to: minuteSizeSlider.target)
+        check(panel.face.settings.minuteNumeralSize == 65 && panel.face.settings.faceSize == 284,
+              "minute size changes independently of clock size")
+        check(store.load().showsMinuteNumerals && store.load().minuteNumeralOpacity == 67 && store.load().minuteNumeralSize == 65,
+              "minute visibility, concentration, and size persist together")
+        advanced.minuteNumeralsButton.performClick(nil)
+        check(!advanced.minuteOpacityRow.slider.isEnabled && !advanced.minuteSizeRow.slider.isEnabled &&
+              controller.settings.minuteNumeralOpacity == 67 && controller.settings.minuteNumeralSize == 65,
+              "disabling the layer retains concentration and size")
+        advanced.minuteNumeralsButton.performClick(nil)
+        check(advanced.minuteOpacityRow.slider.doubleValue == 67 && advanced.minuteSizeRow.slider.doubleValue == 65,
+              "reenabling the layer restores its chosen details")
+        advanced.dateButton.performClick(nil)
+        check(!panel.face.settings.showsDate && panel.face.settings.showsMinuteNumerals,
+              "minute layer remains visible when corner dates are hidden")
+        advanced.close()
+        advanced.showSettings()
+        check(advanced.minuteSizeRow.slider.doubleValue == 65 && advanced.stylePopup.indexOfSelectedItem == 1,
+              "closing and reopening settings preserves selections")
+        let card = CGRect(x: 12, y: 12, width: 224, height: 224)
+        for minute in ["00", "11", "58"] {
+            if let full = MinuteNumerals.path(for: minute, in: card)?.boundingBoxOfPath,
+               let small = MinuteNumerals.path(for: minute, in: card, size: 40)?.boundingBoxOfPath {
+                check(abs(small.width / full.width - 0.4) < 0.001 &&
+                      abs(small.midX - card.midX) < 0.001 && abs(small.midY - card.midY) < 0.001,
+                      "minute \(minute) scales its visible outlines and remains centered")
+            } else { check(false, "minute \(minute) has renderable outlines") }
         }
-        check(opacityItem?.isHidden == true && !panel.face.settings.showsMinuteNumerals,
-              "minute opacity control is hidden while layer is off")
-        if let toggle = controller.menu.items.firstIndex(where: { $0.title == "显示分钟大字" }) {
-            controller.menu.performActionForItem(at: toggle)
-            check(opacityItem?.isHidden == false && panel.face.settings.showsMinuteNumerals,
-                  "enabling minute layer reveals its opacity control")
-            let windowAlpha = panel.alphaValue
-            let minuteSlider = controller.minuteOpacityView.slider
-            minuteSlider.doubleValue = 67
-            _ = minuteSlider.sendAction(minuteSlider.action, to: minuteSlider.target)
-            check(abs(panel.face.settings.minuteNumeralAlpha - 0.67) < 0.001,
-                  "minute concentration slider updates the rendered layer")
-            check(panel.alphaValue == windowAlpha, "minute concentration leaves window transparency unchanged")
-            check(store.load().showsMinuteNumerals && store.load().minuteNumeralOpacity == 67,
-                  "minute layer and concentration persist together")
-            controller.menu.performActionForItem(at: toggle)
-            check(opacityItem?.isHidden == true && !panel.face.settings.showsMinuteNumerals &&
-                  controller.settings.minuteNumeralOpacity == 67,
-                  "disabling layer hides its control and retains chosen concentration")
-            controller.menu.performActionForItem(at: toggle)
-            if let submenu = controller.menu.items.first(where: { $0.title == "表盘样式" })?.submenu {
-                for (index, style) in ClockStyle.allCases.enumerated() {
-                    submenu.performActionForItem(at: index)
-                    check(panel.face.settings.style == style && panel.face.settings.showsMinuteNumerals &&
-                          panel.face.settings.minuteNumeralOpacity == 67,
-                          "\(style.rawValue) retains independent minute layer and concentration")
-                }
-            }
-        } else { check(false, "minute layer toggle exists") }
-        if let index = controller.menu.items.firstIndex(where: { $0.title == "显示日期" }) {
-            controller.menu.performActionForItem(at: index)
-            check(!panel.face.settings.showsDate && panel.face.settings.showsMinuteNumerals,
-                  "minute layer remains visible when corner dates are hidden")
-        } else { check(false, "date menu exists") }
         panel.showClock()
         check(panel.isVisible, "clock can be shown")
         check(controller.quickMenu.items.map(\.title) == ["锁定位置", "显示分钟大字", "显示秒针"],
@@ -104,10 +140,16 @@ enum RuntimeChecks {
         check(panel.face.settings.showsMinuteNumerals != minutesBefore &&
               store.load().showsMinuteNumerals == panel.face.settings.showsMinuteNumerals,
               "quick minute toggle updates the clock and saved preferences")
+        check(advanced.minuteNumeralsButton.state == .off &&
+              !advanced.minuteOpacityRow.slider.isEnabled && !advanced.minuteSizeRow.slider.isEnabled &&
+              advanced.minuteSizeRow.slider.doubleValue == 65,
+              "quick minute toggle updates advanced controls without losing their values")
         let secondsBefore = panel.face.settings.showsSeconds
         controller.quickMenu.performActionForItem(at: 2)
         check(panel.face.settings.showsSeconds != secondsBefore,
               "quick seconds toggle reaches the clock")
+        check(advanced.secondsButton.state == .on,
+              "quick seconds toggle updates advanced settings")
         controller.quickMenu.performActionForItem(at: 0)
         check(panel.ignoresMouseEvents && panel.quickAccessPanel.isVisible &&
               !panel.quickAccessPanel.ignoresMouseEvents && controller.quickMenu.items[0].state == .on,

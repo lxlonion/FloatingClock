@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settings = ClockSettings()
     private var panel: ClockPanel!
     private var menuController: MenuController!
+    private var advancedSettingsController: AdvancedSettingsWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         settings = store.load()
@@ -16,13 +17,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.settings.origin = StoredPoint(x: origin.x, y: origin.y)
             self.store.save(self.settings)
             self.menuController.settings = self.settings
+            self.advancedSettingsController?.settings = self.settings
         }
         menuController.onSettingsChanged = { [weak self] updated in
             guard let self else { return }
-            self.settings = updated
-            self.panel.apply(updated)
-            self.panel.constrainAndSavePosition()
+            self.applySettings(updated)
         }
+        menuController.onShowAdvancedSettings = { [weak self] in self?.showAdvancedSettings() }
         menuController.onToggleVisibility = { [weak self] in
             guard let self else { return }
             if self.panel.isVisible { self.panel.hideClock() } else { self.panel.showClock() }
@@ -47,6 +48,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         panel.constrainAndSavePosition()
         panel.showClock()
+    }
+
+    private func applySettings(_ updated: ClockSettings) {
+        settings = updated.normalized()
+        panel.apply(settings)
+        panel.constrainAndSavePosition()
+    }
+
+    private func showAdvancedSettings() {
+        if advancedSettingsController == nil {
+            let controller = AdvancedSettingsWindowController(settings: settings)
+            controller.onSettingsChanged = { [weak self] updated in self?.applySettings(updated) }
+            advancedSettingsController = controller
+        }
+        advancedSettingsController?.settings = settings
+        advancedSettingsController?.showSettings()
     }
 
     @objc private func displayConfigurationChanged() {

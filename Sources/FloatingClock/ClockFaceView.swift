@@ -7,7 +7,7 @@ final class ClockFaceView: NSView {
     var onDragFinished: (() -> Void)?
     var onContextMenu: ((NSEvent) -> Void)?
     var quickAccessCorner: ClockCorner? { didSet { if oldValue != quickAccessCorner { needsDisplay = true } } }
-    private var minutePathCache: (minute: String, card: CGRect, path: CGPath)?
+    private var minutePathCache: (minute: String, card: CGRect, size: Double, path: CGPath)?
 
     override var acceptsFirstResponder: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -95,8 +95,10 @@ final class ClockFaceView: NSView {
         }
 
         if settings.showsMinuteNumerals {
-            if minutePathCache?.minute != readout.minute || minutePathCache?.card != card {
-                minutePathCache = MinuteNumerals.path(for: readout.minute, in: card).map { (readout.minute, card, $0) }
+            if minutePathCache?.minute != readout.minute || minutePathCache?.card != card ||
+                minutePathCache?.size != settings.minuteNumeralSize {
+                minutePathCache = MinuteNumerals.path(for: readout.minute, in: card, size: settings.minuteNumeralSize)
+                    .map { (readout.minute, card, settings.minuteNumeralSize, $0) }
             }
             if let path = minutePathCache?.path, let context = NSGraphicsContext.current?.cgContext {
                 context.setFillColor(ink.withAlphaComponent(settings.minuteNumeralAlpha).cgColor)

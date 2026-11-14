@@ -59,29 +59,17 @@ final class MenuController: NSObject, NSMenuDelegate {
     let menu = NSMenu()
     let quickMenu = NSMenu()
     let transparencyView = PercentageMenuView()
-    let minuteOpacityView = PercentageMenuView(
-        titleText: "分钟大字浓度", initialValue: 40, maximum: 100,
-        lowText: "0% 透明", highText: "100% 实色",
-        accessibilityLabel: "分钟大字浓度，0% 到 100%",
-        help: "只影响分钟大字。数值越高，颜色越深；不改变整个时钟的透明度。")
     private var statusItem: NSStatusItem?
     private let subtitle = NSTextField(labelWithString: "始终置顶 · 拖动表盘移动")
     private var lockItem: NSMenuItem!
     private var visibilityItem: NSMenuItem!
-    private var secondsItem: NSMenuItem!
-    private var dateItem: NSMenuItem!
-    private var minuteNumeralItem: NSMenuItem!
-    private var minuteOpacityItem: NSMenuItem!
-    private var sizeItems: [NSMenuItem] = []
-    private var styleItems: [NSMenuItem] = []
-    private var appearanceItems: [NSMenuItem] = []
-    private var presetItems: [NSMenuItem] = []
     private var quickItems: [NSMenuItem] = []
     var settings: ClockSettings { didSet { refresh() } }
     var clockIsVisible = true { didSet { refresh() } }
     var onSettingsChanged: ((ClockSettings) -> Void)?
     var onToggleVisibility: (() -> Void)?
     var onMoveToCurrentScreen: (() -> Void)?
+    var onShowAdvancedSettings: (() -> Void)?
     var onQuit: (() -> Void)?
 
     init(settings: ClockSettings, includeStatusItem: Bool = true) {
@@ -104,13 +92,12 @@ final class MenuController: NSObject, NSMenuDelegate {
             let image = NSImage(systemSymbolName: "clock", accessibilityDescription: "漂浮时钟设置")
             image?.isTemplate = true
             item.button?.image = image
-            item.button?.toolTip = "漂浮时钟 · 透明度与位置设置"
+            item.button?.toolTip = "漂浮时钟 · 设置"
             item.button?.setAccessibilityLabel("漂浮时钟设置")
             item.menu = menu
             statusItem = item
         }
         transparencyView.onChange = { [weak self] value in self?.change { $0.transparency = value } }
-        minuteOpacityView.onChange = { [weak self] value in self?.change { $0.minuteNumeralOpacity = value } }
         refresh()
     }
 
@@ -133,71 +120,15 @@ final class MenuController: NSObject, NSMenuDelegate {
         let sliderItem = NSMenuItem()
         sliderItem.view = transparencyView
         menu.addItem(sliderItem)
-        let presets = NSMenuItem(title: "透明度预设", action: nil, keyEquivalent: "")
-        let presetsMenu = NSMenu()
-        presetsMenu.autoenablesItems = false
-        for value in [0, 25, 50, 75, 90] {
-            let item = makeItem(value == 0 ? "0% · 不透明" : "\(value)%", action: #selector(setPreset(_:)))
-            item.tag = value
-            presetItems.append(item)
-            presetsMenu.addItem(item)
-        }
-        presets.submenu = presetsMenu
-        menu.addItem(presets)
         menu.addItem(.separator())
         lockItem = makeItem("锁定位置（鼠标穿透）", action: #selector(toggleLock))
         menu.addItem(lockItem)
         visibilityItem = makeItem("显示时钟", action: #selector(toggleVisibility))
         menu.addItem(visibilityItem)
         menu.addItem(.separator())
-        let styleItem = NSMenuItem(title: "表盘样式", action: nil, keyEquivalent: "")
-        let styleMenu = NSMenu()
-        styleMenu.autoenablesItems = false
-        for (index, style) in ClockStyle.allCases.enumerated() {
-            let item = makeItem(style.menuTitle, action: #selector(setStyle(_:)))
-            item.tag = index
-            styleItems.append(item)
-            styleMenu.addItem(item)
-        }
-        styleItem.submenu = styleMenu
-        menu.addItem(styleItem)
-        minuteNumeralItem = makeItem("显示分钟大字", action: #selector(toggleMinuteNumerals))
-        menu.addItem(minuteNumeralItem)
-        minuteOpacityItem = NSMenuItem(title: "分钟大字浓度", action: nil, keyEquivalent: "")
-        let minuteOpacityMenu = NSMenu()
-        minuteOpacityMenu.autoenablesItems = false
-        let minuteSliderItem = NSMenuItem()
-        minuteSliderItem.view = minuteOpacityView
-        minuteOpacityMenu.addItem(minuteSliderItem)
-        minuteOpacityItem.submenu = minuteOpacityMenu
-        menu.addItem(minuteOpacityItem)
-        menu.addItem(.separator())
-        let sizeItem = NSMenuItem(title: "时钟大小", action: nil, keyEquivalent: "")
-        let sizeMenu = NSMenu()
-        sizeMenu.autoenablesItems = false
-        for (title, size) in [("小巧 · 164", 164), ("标准 · 224", 224), ("大号 · 284", 284)] {
-            let item = makeItem(title, action: #selector(setSize(_:)))
-            item.tag = size
-            sizeItems.append(item)
-            sizeMenu.addItem(item)
-        }
-        sizeItem.submenu = sizeMenu
-        menu.addItem(sizeItem)
-        let appearanceItem = NSMenuItem(title: "表盘外观", action: nil, keyEquivalent: "")
-        let appearanceMenu = NSMenu()
-        appearanceMenu.autoenablesItems = false
-        for (index, title) in ["暖白", "墨黑", "跟随系统"].enumerated() {
-            let item = makeItem(title, action: #selector(setAppearance(_:)))
-            item.tag = index
-            appearanceItems.append(item)
-            appearanceMenu.addItem(item)
-        }
-        appearanceItem.submenu = appearanceMenu
-        menu.addItem(appearanceItem)
-        secondsItem = makeItem("显示秒针", action: #selector(toggleSeconds))
-        menu.addItem(secondsItem)
-        dateItem = makeItem("显示日期", action: #selector(toggleDate))
-        menu.addItem(dateItem)
+        let advanced = makeItem("高级设置…", action: #selector(showAdvancedSettings))
+        advanced.keyEquivalent = ","
+        menu.addItem(advanced)
         menu.addItem(.separator())
         menu.addItem(makeItem("移回当前屏幕", action: #selector(moveToCurrentScreen)))
         menu.addItem(.separator())
@@ -217,22 +148,12 @@ final class MenuController: NSObject, NSMenuDelegate {
         transparencyView.update(settings.transparency)
         lockItem.state = settings.isLocked ? .on : .off
         visibilityItem.state = clockIsVisible ? .on : .off
-        secondsItem.state = settings.showsSeconds ? .on : .off
-        dateItem.state = settings.showsDate ? .on : .off
-        minuteNumeralItem.state = settings.showsMinuteNumerals ? .on : .off
-        minuteOpacityItem.isHidden = !settings.showsMinuteNumerals
-        minuteOpacityItem.title = "分钟大字浓度 · \(Int(settings.minuteNumeralOpacity))%"
-        minuteOpacityView.update(settings.minuteNumeralOpacity)
         if quickItems.count == 3 {
             for (item, enabled) in zip(quickItems, [settings.isLocked, settings.showsMinuteNumerals, settings.showsSeconds]) {
                 item.state = enabled ? .on : .off
             }
         }
         subtitle.stringValue = settings.isLocked ? "始终置顶 · 已锁定，鼠标可穿透" : "始终置顶 · 拖动表盘移动"
-        for item in presetItems { item.state = Double(item.tag) == settings.transparency ? .on : .off }
-        for item in sizeItems { item.state = Double(item.tag) == settings.faceSize ? .on : .off }
-        for item in styleItems { item.state = ClockStyle.allCases[item.tag] == settings.style ? .on : .off }
-        for item in appearanceItems { item.state = ClockAppearance.allCases[item.tag] == settings.appearance ? .on : .off }
     }
 
     private func change(_ edit: (inout ClockSettings) -> Void) {
@@ -242,14 +163,10 @@ final class MenuController: NSObject, NSMenuDelegate {
         onSettingsChanged?(settings)
     }
 
-    @objc private func setPreset(_ item: NSMenuItem) { change { $0.transparency = Double(item.tag) } }
-    @objc private func setSize(_ item: NSMenuItem) { change { $0.faceSize = Double(item.tag) } }
-    @objc private func setStyle(_ item: NSMenuItem) { change { $0.style = ClockStyle.allCases[item.tag] } }
-    @objc private func setAppearance(_ item: NSMenuItem) { change { $0.appearance = ClockAppearance.allCases[item.tag] } }
     @objc private func toggleLock() { change { $0.isLocked.toggle() } }
     @objc private func toggleSeconds() { change { $0.showsSeconds.toggle() } }
-    @objc private func toggleDate() { change { $0.showsDate.toggle() } }
     @objc private func toggleMinuteNumerals() { change { $0.showsMinuteNumerals.toggle() } }
+    @objc private func showAdvancedSettings() { onShowAdvancedSettings?() }
     @objc private func toggleVisibility() { onToggleVisibility?() }
     @objc private func moveToCurrentScreen() { onMoveToCurrentScreen?() }
     @objc private func quitApp() { onQuit?() }
