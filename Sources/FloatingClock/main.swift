@@ -69,6 +69,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 let application = NSApplication.shared
 application.setActivationPolicy(.accessory)
+if CommandLine.arguments.contains("--smoke-test") {
+    exit(RuntimeChecks.run())
+}
+if let index = CommandLine.arguments.firstIndex(of: "--render-preview"), CommandLine.arguments.count > index + 1 {
+    do {
+        try RuntimeChecks.renderPreview(to: CommandLine.arguments[index + 1])
+        exit(0)
+    } catch {
+        fputs("Preview failed: \(error)\n", stderr)
+        exit(1)
+    }
+}
 let delegate = AppDelegate()
 application.delegate = delegate
 application.run()

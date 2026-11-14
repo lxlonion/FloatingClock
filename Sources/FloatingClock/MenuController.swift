@@ -21,6 +21,7 @@ final class TransparencyMenuView: NSView {
         slider.target = self
         slider.action = #selector(sliderChanged)
         slider.setAccessibilityLabel("时钟透明度，0% 到 90%")
+        slider.setAccessibilityHelp("0% 完全不透明，90% 最透明。")
         addSubview(slider)
         let low = NSTextField(labelWithString: "0% 不透明")
         let high = NSTextField(labelWithString: "90% 最透明")
@@ -40,7 +41,6 @@ final class TransparencyMenuView: NSView {
     func update(_ transparency: Double) {
         slider.doubleValue = transparency
         valueLabel.stringValue = "\(Int(transparency))%"
-        slider.setAccessibilityValue("\(Int(transparency))%")
     }
 
     @objc private func sliderChanged() {

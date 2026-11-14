@@ -8,7 +8,7 @@ export CLANG_MODULE_CACHE_PATH="$BUILD_DIR/ModuleCache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$CLANG_MODULE_CACHE_PATH"
 
 SWIFT_OPTIONS=(--disable-sandbox --package-path "$PROJECT_DIR" --scratch-path "$BUILD_DIR" --cache-path "$BUILD_DIR/cache" --config-path "$BUILD_DIR/config" --security-path "$BUILD_DIR/security")
-swift build "${SWIFT_OPTIONS[@]}" --configuration release
+swift build "${SWIFT_OPTIONS[@]}" --configuration release -debug-info-format none
 BIN_DIR="$(swift build "${SWIFT_OPTIONS[@]}" --configuration release --show-bin-path)"
 APP_DIR="$OUTPUT_DIR/FloatingClock.app"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
