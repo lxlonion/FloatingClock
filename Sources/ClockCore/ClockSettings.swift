@@ -7,13 +7,11 @@ public enum ClockAppearance: String, Codable, CaseIterable {
 public enum ClockStyle: String, Codable, CaseIterable {
     case minimal = "style1"
     case cardinalNumbers = "style2"
-    case minuteReadout = "style3"
 
     public var menuTitle: String {
         switch self {
         case .minimal: return "样式一 · 极简刻度"
         case .cardinalNumbers: return "样式二 · 12 / 3 / 6 / 9"
-        case .minuteReadout: return "样式三 · 中央大数字"
         }
     }
 }
@@ -29,6 +27,8 @@ public struct ClockSettings: Codable, Equatable {
     public var faceSize: Double = 224
     public var appearance: ClockAppearance = .light
     public var style: ClockStyle = .minimal
+    public var showsMinuteNumerals = false
+    public var minuteNumeralOpacity: Double = 40
     public var isLocked = false
     public var showsSeconds = true
     public var showsDate = true
@@ -37,7 +37,8 @@ public struct ClockSettings: Codable, Equatable {
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case transparency, faceSize, appearance, style, isLocked, showsSeconds, showsDate, origin
+        case transparency, faceSize, appearance, style, showsMinuteNumerals, minuteNumeralOpacity
+        case isLocked, showsSeconds, showsDate, origin
     }
 
     public init(from decoder: Decoder) throws {
@@ -46,8 +47,11 @@ public struct ClockSettings: Codable, Equatable {
         transparency = try values.decodeIfPresent(Double.self, forKey: .transparency) ?? transparency
         faceSize = try values.decodeIfPresent(Double.self, forKey: .faceSize) ?? faceSize
         appearance = try values.decodeIfPresent(ClockAppearance.self, forKey: .appearance) ?? appearance
-        // Version 1.0 saved no style key. Keep every existing preference during the update.
-        style = (try? values.decode(ClockStyle.self, forKey: .style)) ?? .minimal
+        let savedStyle = try values.decodeIfPresent(String.self, forKey: .style)
+        style = savedStyle.flatMap(ClockStyle.init(rawValue:)) ?? .minimal
+        // The removed third style becomes style one with the shared minute layer enabled.
+        showsMinuteNumerals = try values.decodeIfPresent(Bool.self, forKey: .showsMinuteNumerals) ?? (savedStyle == "style3")
+        minuteNumeralOpacity = try values.decodeIfPresent(Double.self, forKey: .minuteNumeralOpacity) ?? minuteNumeralOpacity
         isLocked = try values.decodeIfPresent(Bool.self, forKey: .isLocked) ?? isLocked
         showsSeconds = try values.decodeIfPresent(Bool.self, forKey: .showsSeconds) ?? showsSeconds
         showsDate = try values.decodeIfPresent(Bool.self, forKey: .showsDate) ?? showsDate
@@ -55,11 +59,13 @@ public struct ClockSettings: Codable, Equatable {
     }
 
     public var alpha: Double { 1 - normalized().transparency / 100 }
+    public var minuteNumeralAlpha: Double { normalized().minuteNumeralOpacity / 100 }
 
     public func normalized() -> Self {
         var result = self
         result.transparency = transparency.isFinite ? min(90, max(0, transparency.rounded())) : 20
         result.faceSize = faceSize.isFinite ? min(360, max(140, faceSize)) : 224
+        result.minuteNumeralOpacity = minuteNumeralOpacity.isFinite ? min(100, max(0, minuteNumeralOpacity.rounded())) : 40
         if let origin, !origin.x.isFinite || !origin.y.isFinite { result.origin = nil }
         return result
     }

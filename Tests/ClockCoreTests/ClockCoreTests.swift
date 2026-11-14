@@ -70,9 +70,50 @@ final class ClockCoreTests: XCTestCase {
         for style in ClockStyle.allCases {
             var settings = ClockSettings()
             settings.style = style
+            settings.showsMinuteNumerals = true
+            settings.minuteNumeralOpacity = 72
             SettingsStore(defaults: defaults).save(settings)
-            XCTAssertEqual(SettingsStore(defaults: defaults).load().style, style)
+            XCTAssertEqual(SettingsStore(defaults: defaults).load(), settings)
         }
+    }
+
+    func testRemovedThirdStyleMigratesToSharedMinuteLayer() throws {
+        let data = Data(#"{"style":"style3","transparency":63,"faceSize":284,"appearance":"dark","isLocked":true,"showsSeconds":false,"showsDate":false,"origin":{"x":-1000,"y":80}}"#.utf8)
+        let settings = try JSONDecoder().decode(ClockSettings.self, from: data)
+        XCTAssertEqual(settings.style, .minimal)
+        XCTAssertTrue(settings.showsMinuteNumerals)
+        XCTAssertEqual(settings.minuteNumeralOpacity, 40)
+        XCTAssertEqual(settings.transparency, 63)
+        XCTAssertEqual(settings.faceSize, 284)
+        XCTAssertEqual(settings.appearance, .dark)
+        XCTAssertTrue(settings.isLocked)
+        XCTAssertFalse(settings.showsSeconds)
+        XCTAssertFalse(settings.showsDate)
+        XCTAssertEqual(settings.origin, StoredPoint(x: -1000, y: 80))
+    }
+
+    func testExistingDialStylesDoNotEnableMinuteLayerOnUpgrade() throws {
+        for style in ClockStyle.allCases {
+            let data = Data("{\"style\":\"\(style.rawValue)\",\"transparency\":27}".utf8)
+            let settings = try JSONDecoder().decode(ClockSettings.self, from: data)
+            XCTAssertEqual(settings.style, style)
+            XCTAssertFalse(settings.showsMinuteNumerals)
+            XCTAssertEqual(settings.transparency, 27)
+        }
+    }
+
+    func testMinuteOpacityBoundsDoNotChangeWindowTransparency() {
+        var settings = ClockSettings()
+        settings.transparency = 63
+        settings.minuteNumeralOpacity = 120
+        XCTAssertEqual(settings.normalized().minuteNumeralOpacity, 100)
+        XCTAssertEqual(settings.minuteNumeralAlpha, 1)
+        XCTAssertEqual(settings.alpha, 0.37, accuracy: 0.0001)
+        settings.minuteNumeralOpacity = -10
+        XCTAssertEqual(settings.minuteNumeralAlpha, 0)
+        settings.minuteNumeralOpacity = .nan
+        XCTAssertEqual(settings.normalized().minuteNumeralOpacity, 40)
+        XCTAssertEqual(settings.transparency, 63)
     }
 
     func testDayWeekdayAndMinuteFollowLocalMidnight() {

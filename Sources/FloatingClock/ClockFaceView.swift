@@ -89,12 +89,12 @@ final class ClockFaceView: NSView {
             readout.weekday.draw(at: CGPoint(x: card.maxX - 23 * scale - weekdaySize.width, y: baseline), withAttributes: weekdayAttributes)
         }
 
-        if settings.style == .minuteReadout {
+        if settings.showsMinuteNumerals {
             if minutePathCache?.minute != readout.minute || minutePathCache?.card != card {
                 minutePathCache = MinuteNumerals.path(for: readout.minute, in: card).map { (readout.minute, card, $0) }
             }
             if let path = minutePathCache?.path, let context = NSGraphicsContext.current?.cgContext {
-                context.setFillColor(ink.withAlphaComponent(dark ? 0.38 : 0.34).cgColor)
+                context.setFillColor(ink.withAlphaComponent(settings.minuteNumeralAlpha).cgColor)
                 context.addPath(path)
                 context.fillPath()
             }

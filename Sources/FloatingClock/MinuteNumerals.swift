@@ -1,10 +1,13 @@
 import AppKit
 import CoreText
 
-/// Sans-serif numeral outlines, centered by visible ink rather than the font's line box.
+/// Comic Sans minute outlines, centered by visible ink rather than the font's line box.
 enum MinuteNumerals {
+    static let font = NSFont(name: "ComicSansMS", size: 100) ??
+        NSFont(name: "Comic Sans MS", size: 100) ?? NSFont.systemFont(ofSize: 100)
+
     private static let outlines: [String: (path: CGPath, radius: CGFloat)] = {
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 100, weight: .light) as CTFont
+        let font = Self.font as CTFont
         var result: [String: (path: CGPath, radius: CGFloat)] = [:]
         for minute in 0..<60 {
             let text = String(format: "%02d", minute)

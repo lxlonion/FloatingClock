@@ -1,14 +1,19 @@
 import AppKit
 import ClockCore
 
-final class TransparencyMenuView: NSView {
-    let slider = NSSlider(value: 20, minValue: 0, maxValue: 90, target: nil, action: nil)
-    private let valueLabel = NSTextField(labelWithString: "20%")
+final class PercentageMenuView: NSView {
+    let slider: NSSlider
+    private let valueLabel: NSTextField
     var onChange: ((Double) -> Void)?
 
-    init() {
+    init(titleText: String = "透明度", initialValue: Double = 20, maximum: Double = 90,
+         lowText: String = "0% 不透明", highText: String = "90% 最透明",
+         accessibilityLabel: String = "时钟透明度，0% 到 90%",
+         help: String = "0% 完全不透明，90% 最透明。") {
+        slider = NSSlider(value: initialValue, minValue: 0, maxValue: maximum, target: nil, action: nil)
+        valueLabel = NSTextField(labelWithString: "\(Int(initialValue))%")
         super.init(frame: CGRect(x: 0, y: 0, width: 286, height: 92))
-        let title = NSTextField(labelWithString: "透明度")
+        let title = NSTextField(labelWithString: titleText)
         title.font = .systemFont(ofSize: 12, weight: .medium)
         title.frame = CGRect(x: 20, y: 64, width: 160, height: 18)
         addSubview(title)
@@ -20,11 +25,11 @@ final class TransparencyMenuView: NSView {
         slider.isContinuous = true
         slider.target = self
         slider.action = #selector(sliderChanged)
-        slider.setAccessibilityLabel("时钟透明度，0% 到 90%")
-        slider.setAccessibilityHelp("0% 完全不透明，90% 最透明。")
+        slider.setAccessibilityLabel(accessibilityLabel)
+        slider.setAccessibilityHelp(help)
         addSubview(slider)
-        let low = NSTextField(labelWithString: "0% 不透明")
-        let high = NSTextField(labelWithString: "90% 最透明")
+        let low = NSTextField(labelWithString: lowText)
+        let high = NSTextField(labelWithString: highText)
         for label in [low, high] {
             label.font = .systemFont(ofSize: 10)
             label.textColor = .secondaryLabelColor
@@ -52,13 +57,20 @@ final class TransparencyMenuView: NSView {
 
 final class MenuController: NSObject, NSMenuDelegate {
     let menu = NSMenu()
-    let transparencyView = TransparencyMenuView()
+    let transparencyView = PercentageMenuView()
+    let minuteOpacityView = PercentageMenuView(
+        titleText: "分钟大字浓度", initialValue: 40, maximum: 100,
+        lowText: "0% 透明", highText: "100% 实色",
+        accessibilityLabel: "分钟大字浓度，0% 到 100%",
+        help: "只影响分钟大字。数值越高，颜色越深；不改变整个时钟的透明度。")
     private var statusItem: NSStatusItem?
     private let subtitle = NSTextField(labelWithString: "始终置顶 · 拖动表盘移动")
     private var lockItem: NSMenuItem!
     private var visibilityItem: NSMenuItem!
     private var secondsItem: NSMenuItem!
     private var dateItem: NSMenuItem!
+    private var minuteNumeralItem: NSMenuItem!
+    private var minuteOpacityItem: NSMenuItem!
     private var sizeItems: [NSMenuItem] = []
     private var styleItems: [NSMenuItem] = []
     private var appearanceItems: [NSMenuItem] = []
@@ -87,6 +99,7 @@ final class MenuController: NSObject, NSMenuDelegate {
             statusItem = item
         }
         transparencyView.onChange = { [weak self] value in self?.change { $0.transparency = value } }
+        minuteOpacityView.onChange = { [weak self] value in self?.change { $0.minuteNumeralOpacity = value } }
         refresh()
     }
 
@@ -137,6 +150,12 @@ final class MenuController: NSObject, NSMenuDelegate {
         }
         styleItem.submenu = styleMenu
         menu.addItem(styleItem)
+        minuteNumeralItem = makeItem("显示分钟大字", action: #selector(toggleMinuteNumerals))
+        menu.addItem(minuteNumeralItem)
+        minuteOpacityItem = NSMenuItem()
+        minuteOpacityItem.view = minuteOpacityView
+        menu.addItem(minuteOpacityItem)
+        menu.addItem(.separator())
         let sizeItem = NSMenuItem(title: "时钟大小", action: nil, keyEquivalent: "")
         let sizeMenu = NSMenu()
         sizeMenu.autoenablesItems = false
@@ -184,6 +203,9 @@ final class MenuController: NSObject, NSMenuDelegate {
         visibilityItem.state = clockIsVisible ? .on : .off
         secondsItem.state = settings.showsSeconds ? .on : .off
         dateItem.state = settings.showsDate ? .on : .off
+        minuteNumeralItem.state = settings.showsMinuteNumerals ? .on : .off
+        minuteOpacityItem.isHidden = !settings.showsMinuteNumerals
+        minuteOpacityView.update(settings.minuteNumeralOpacity)
         subtitle.stringValue = settings.isLocked ? "始终置顶 · 已锁定，鼠标可穿透" : "始终置顶 · 拖动表盘移动"
         for item in presetItems { item.state = Double(item.tag) == settings.transparency ? .on : .off }
         for item in sizeItems { item.state = Double(item.tag) == settings.faceSize ? .on : .off }
@@ -205,6 +227,7 @@ final class MenuController: NSObject, NSMenuDelegate {
     @objc private func toggleLock() { change { $0.isLocked.toggle() } }
     @objc private func toggleSeconds() { change { $0.showsSeconds.toggle() } }
     @objc private func toggleDate() { change { $0.showsDate.toggle() } }
+    @objc private func toggleMinuteNumerals() { change { $0.showsMinuteNumerals.toggle() } }
     @objc private func toggleVisibility() { onToggleVisibility?() }
     @objc private func moveToCurrentScreen() { onMoveToCurrentScreen?() }
     @objc private func quitApp() { onQuit?() }
