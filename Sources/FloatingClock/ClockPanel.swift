@@ -1,11 +1,13 @@
 import AppKit
 import ClockCore
 
-final class ClockPanel: NSPanel {
+final class ClockPanel: NSPanel, NSWindowDelegate {
     let face = ClockFaceView()
+    let quickAccessPanel = QuickAccessPanel()
     private var ticker: Timer?
     private var settings: ClockSettings
     var onPositionChanged: ((CGPoint) -> Void)?
+    var onQuickMenuRequested: ((NSView) -> Void)?
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
@@ -38,6 +40,8 @@ final class ClockPanel: NSPanel {
         face.setAccessibilityRole(.image)
         face.setAccessibilityLabel("漂浮指针时钟；从菜单栏调整设置")
         face.onDragFinished = { [weak self] in self?.constrainAndSavePosition() }
+        delegate = self
+        quickAccessPanel.onOpen = { [weak self] view in self?.onQuickMenuRequested?(view) }
         apply(settings)
     }
 
@@ -52,15 +56,18 @@ final class ClockPanel: NSPanel {
         alphaValue = settings.alpha
         ignoresMouseEvents = settings.isLocked
         face.settings = settings
+        updateQuickAccess()
         if isVisible { startTicker() }
     }
 
     func showClock() {
         orderFrontRegardless()
+        updateQuickAccess()
         startTicker()
     }
 
     func hideClock() {
+        hideQuickAccess()
         orderOut(nil)
         ticker?.invalidate()
         ticker = nil
@@ -78,6 +85,36 @@ final class ClockPanel: NSPanel {
         let origin = ClockLayout.clampedOrigin(frame.origin, size: frame.width, screens: NSScreen.screens.map(\.visibleFrame))
         if frame.origin != origin { setFrameOrigin(origin) }
         onPositionChanged?(origin)
+        updateQuickAccess()
+    }
+
+    func windowDidMove(_ notification: Notification) { updateQuickAccess() }
+    func windowDidResize(_ notification: Notification) { updateQuickAccess() }
+
+    private func updateQuickAccess() {
+        guard settings.isLocked, isVisible,
+              let screenFrame = (screen ?? NSScreen.main)?.visibleFrame else {
+            hideQuickAccess()
+            return
+        }
+        let corner = QuickAccessLayout.corner(for: frame, on: screenFrame)
+        face.quickAccessCorner = corner
+        let card = face.bounds.insetBy(dx: ClockLayout.padding, dy: ClockLayout.padding)
+        let buttonFrame = QuickAccessLayout.buttonFrame(in: card, corner: corner)
+        quickAccessPanel.button.settings = settings
+        quickAccessPanel.button.faceScale = card.width / 224
+        quickAccessPanel.level = level
+        quickAccessPanel.collectionBehavior = collectionBehavior
+        quickAccessPanel.alphaValue = max(0.7, settings.alpha)
+        quickAccessPanel.setFrame(convertToScreen(buttonFrame), display: true)
+        if quickAccessPanel.parent !== self { addChildWindow(quickAccessPanel, ordered: .above) }
+        quickAccessPanel.orderFrontRegardless()
+    }
+
+    private func hideQuickAccess() {
+        face.quickAccessCorner = nil
+        if quickAccessPanel.parent === self { removeChildWindow(quickAccessPanel) }
+        quickAccessPanel.orderOut(nil)
     }
 
     private func startTicker() {

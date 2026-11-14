@@ -35,7 +35,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuController.onQuit = { NSApp.terminate(nil) }
         panel.face.onContextMenu = { [weak self] event in
             guard let self else { return }
-            NSMenu.popUpContextMenu(self.menuController.menu, with: event, for: self.panel.face)
+            NSMenu.popUpContextMenu(self.menuController.quickMenu, with: event, for: self.panel.face)
+        }
+        panel.onQuickMenuRequested = { [weak self] button in
+            self?.menuController.quickMenu.popUp(positioning: nil,
+                                               at: CGPoint(x: button.bounds.midX, y: button.bounds.maxY + 4), in: button)
         }
         NotificationCenter.default.addObserver(self, selector: #selector(displayConfigurationChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         for name in [NSWorkspace.activeSpaceDidChangeNotification, NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification] {
@@ -71,6 +75,15 @@ let application = NSApplication.shared
 application.setActivationPolicy(.accessory)
 if CommandLine.arguments.contains("--smoke-test") {
     exit(RuntimeChecks.run())
+}
+if let index = CommandLine.arguments.firstIndex(of: "--render-quick-previews"), CommandLine.arguments.count > index + 1 {
+    do {
+        try RuntimeChecks.renderQuickPreviews(to: CommandLine.arguments[index + 1])
+        exit(0)
+    } catch {
+        fputs("Quick access previews failed: \(error)\n", stderr)
+        exit(1)
+    }
 }
 if let index = CommandLine.arguments.firstIndex(of: "--render-style-previews"), CommandLine.arguments.count > index + 1 {
     do {
