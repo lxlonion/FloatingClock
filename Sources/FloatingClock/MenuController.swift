@@ -152,8 +152,13 @@ final class MenuController: NSObject, NSMenuDelegate {
         menu.addItem(styleItem)
         minuteNumeralItem = makeItem("显示分钟大字", action: #selector(toggleMinuteNumerals))
         menu.addItem(minuteNumeralItem)
-        minuteOpacityItem = NSMenuItem()
-        minuteOpacityItem.view = minuteOpacityView
+        minuteOpacityItem = NSMenuItem(title: "分钟大字浓度", action: nil, keyEquivalent: "")
+        let minuteOpacityMenu = NSMenu()
+        minuteOpacityMenu.autoenablesItems = false
+        let minuteSliderItem = NSMenuItem()
+        minuteSliderItem.view = minuteOpacityView
+        minuteOpacityMenu.addItem(minuteSliderItem)
+        minuteOpacityItem.submenu = minuteOpacityMenu
         menu.addItem(minuteOpacityItem)
         menu.addItem(.separator())
         let sizeItem = NSMenuItem(title: "时钟大小", action: nil, keyEquivalent: "")
@@ -205,6 +210,7 @@ final class MenuController: NSObject, NSMenuDelegate {
         dateItem.state = settings.showsDate ? .on : .off
         minuteNumeralItem.state = settings.showsMinuteNumerals ? .on : .off
         minuteOpacityItem.isHidden = !settings.showsMinuteNumerals
+        minuteOpacityItem.title = "分钟大字浓度 · \(Int(settings.minuteNumeralOpacity))%"
         minuteOpacityView.update(settings.minuteNumeralOpacity)
         subtitle.stringValue = settings.isLocked ? "始终置顶 · 已锁定，鼠标可穿透" : "始终置顶 · 拖动表盘移动"
         for item in presetItems { item.state = Double(item.tag) == settings.transparency ? .on : .off }

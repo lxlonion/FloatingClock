@@ -58,7 +58,9 @@ enum RuntimeChecks {
             }
         } else { check(false, "style menu exists") }
         check(MinuteNumerals.font.familyName == "Comic Sans MS", "minute numerals use Comic Sans MS")
-        let opacityItem = controller.menu.items.first { $0.view === controller.minuteOpacityView }
+        let opacityItem = controller.menu.items.first {
+            $0.submenu?.items.contains(where: { $0.view === controller.minuteOpacityView }) == true
+        }
         check(opacityItem?.isHidden == true && !panel.face.settings.showsMinuteNumerals,
               "minute opacity control is hidden while layer is off")
         if let toggle = controller.menu.items.firstIndex(where: { $0.title == "显示分钟大字" }) {
