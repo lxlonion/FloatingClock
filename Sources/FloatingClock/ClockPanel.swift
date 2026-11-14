@@ -37,8 +37,8 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         contentView = face
         face.autoresizingMask = [.width, .height]
         face.setAccessibilityElement(true)
-        face.setAccessibilityRole(.image)
-        face.setAccessibilityLabel("漂浮指针时钟；从菜单栏调整设置")
+        face.setAccessibilityRole(.group)
+        face.setAccessibilityLabel("漂浮指针时钟；右键打开快捷设置，完整设置在菜单栏")
         face.onDragFinished = { [weak self] in self?.constrainAndSavePosition() }
         delegate = self
         quickAccessPanel.onOpen = { [weak self] view in self?.onQuickMenuRequested?(view) }
@@ -109,10 +109,14 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         quickAccessPanel.setFrame(convertToScreen(buttonFrame), display: true)
         if quickAccessPanel.parent !== self { addChildWindow(quickAccessPanel, ordered: .above) }
         quickAccessPanel.orderFrontRegardless()
+        quickAccessPanel.button.setAccessibilityParent(face)
+        face.setAccessibilityChildren([quickAccessPanel.button])
     }
 
     private func hideQuickAccess() {
         face.quickAccessCorner = nil
+        face.setAccessibilityChildren([])
+        quickAccessPanel.button.setAccessibilityParent(nil)
         if quickAccessPanel.parent === self { removeChildWindow(quickAccessPanel) }
         quickAccessPanel.orderOut(nil)
     }
