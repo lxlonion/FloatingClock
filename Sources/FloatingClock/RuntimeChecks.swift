@@ -29,6 +29,22 @@ enum RuntimeChecks {
             store.save(value)
         }
         controller.onShowAdvancedSettings = { advanced.showSettings() }
+        func syncVisibility() {
+            controller.clockIsVisible = panel.isVisible
+            advanced.clockIsVisible = panel.isVisible
+        }
+        let toggleVisibility = {
+            if panel.isVisible { panel.hideClock() } else { panel.showClock() }
+            syncVisibility()
+        }
+        controller.onToggleVisibility = toggleVisibility
+        advanced.onToggleVisibility = toggleVisibility
+        advanced.onMoveToCurrentScreen = {
+            panel.moveToCurrentScreen()
+            syncVisibility()
+        }
+        var quitRequests = 0
+        advanced.onQuit = { quitRequests += 1 }
         check(panel.level.rawValue == NSWindow.Level.popUpMenu.rawValue - 1, "above app windows, below system menus")
         check(panel.collectionBehavior.contains([.canJoinAllSpaces, .fullScreenAuxiliary, .canJoinAllApplications]), "all Spaces and fullscreen flags")
         check(!panel.canBecomeKey && !panel.canBecomeMain && !panel.hidesOnDeactivate, "does not steal keyboard focus")
@@ -37,10 +53,13 @@ enum RuntimeChecks {
         slider.doubleValue = 54
         _ = slider.sendAction(slider.action, to: slider.target)
         check(abs(panel.alphaValue - 0.46) < 0.001, "live slider changes actual window alpha")
+        check(advanced.transparencyRow.slider.doubleValue == 54,
+              "menu transparency changes synchronize to the open settings window")
 
         if let index = controller.menu.items.firstIndex(where: { $0.title == "锁定位置（鼠标穿透）" }) {
             controller.menu.performActionForItem(at: index)
             check(panel.ignoresMouseEvents && controller.settings.isLocked, "locking enables mouse pass-through")
+            check(advanced.lockButton.state == .on, "menu lock changes synchronize to advanced settings")
             check(store.load().isLocked && store.load().transparency == 54, "menu changes persist to preferences")
             controller.menu.performActionForItem(at: index)
             check(!panel.ignoresMouseEvents, "menu remains able to unlock")
@@ -61,6 +80,41 @@ enum RuntimeChecks {
             check(advanced.window === window && advanced.window?.isVisible == true,
                   "reopening and repeated selection reuse the same settings window")
         } else { check(false, "advanced settings menu exists") }
+
+        advanced.window?.contentView?.layoutSubtreeIfNeeded()
+        let scroll = advanced.settingsScrollView
+        check(abs((scroll.documentView?.frame.width ?? 0) - scroll.contentView.bounds.width) < 1,
+              "settings scroll content fits the viewport without clipping controls on the right")
+
+        let advancedTransparency = advanced.transparencyRow.slider
+        advancedTransparency.doubleValue = 31
+        _ = advancedTransparency.sendAction(advancedTransparency.action, to: advancedTransparency.target)
+        check(abs(panel.alphaValue - 0.69) < 0.001 && store.load().transparency == 31 &&
+              controller.transparencyView.slider.doubleValue == 31,
+              "advanced transparency updates the clock, saved value, and menu slider together")
+        advanced.lockButton.performClick(nil)
+        check(panel.ignoresMouseEvents && store.load().isLocked &&
+              controller.menu.items.first(where: { $0.title == "锁定位置（鼠标穿透）" })?.state == .on,
+              "advanced lock updates mouse pass-through, persistence, and menu checkmark")
+        advanced.lockButton.performClick(nil)
+        panel.showClock()
+        syncVisibility()
+        advanced.visibilityButton.performClick(nil)
+        check(!panel.isVisible && !controller.clockIsVisible && advanced.visibilityButton.state == .off &&
+              advanced.window?.isVisible == true,
+              "hiding the clock in advanced settings keeps the settings window open and menu synchronized")
+        if let index = controller.menu.items.firstIndex(where: { $0.title == "显示时钟" }) {
+            controller.menu.performActionForItem(at: index)
+            check(panel.isVisible && advanced.visibilityButton.state == .on,
+                  "showing the clock from the menu synchronizes the advanced visibility control")
+            controller.menu.performActionForItem(at: index)
+        } else { check(false, "visibility menu exists") }
+        advanced.moveToScreenButton.performClick(nil)
+        check(panel.isVisible && controller.clockIsVisible && advanced.visibilityButton.state == .on &&
+              NSScreen.screens.contains { $0.visibleFrame.contains(panel.frame) },
+              "advanced screen recovery shows the clock on screen and updates both visibility controls")
+        advanced.quitButton.performClick(nil)
+        check(quitRequests == 1, "advanced settings exposes the app quit action")
 
         let sizeSlider = advanced.faceSizeRow.slider
         sizeSlider.doubleValue = 284

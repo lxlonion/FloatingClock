@@ -1,6 +1,10 @@
 import AppKit
 import ClockCore
 
+private final class SettingsDocumentView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 final class SettingsSliderRow: NSView {
     let slider: NSSlider
     private let valueLabel = NSTextField(labelWithString: "")
@@ -75,11 +79,19 @@ final class SettingsSliderRow: NSView {
 }
 
 final class AdvancedSettingsWindowController: NSWindowController {
+    let settingsScrollView = NSScrollView()
+    let lockButton = NSButton(checkboxWithTitle: "锁定位置（鼠标穿透）", target: nil, action: nil)
+    let visibilityButton = NSButton(checkboxWithTitle: "显示时钟", target: nil, action: nil)
+    let moveToScreenButton = NSButton(title: "移回当前屏幕", target: nil, action: nil)
+    let quitButton = NSButton(title: "退出漂浮时钟", target: nil, action: nil)
     let stylePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     let appearancePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     let secondsButton = NSButton(checkboxWithTitle: "显示秒针", target: nil, action: nil)
     let dateButton = NSButton(checkboxWithTitle: "显示日期与星期", target: nil, action: nil)
     let minuteNumeralsButton = NSButton(checkboxWithTitle: "显示分钟大字", target: nil, action: nil)
+    let transparencyRow = SettingsSliderRow(
+        title: "透明度", value: 20, range: 0...90,
+        lowText: "0% · 不透明", highText: "90% · 最透明", help: "调整整个时钟的透明度，0% 完全不透明，90% 最透明。")
     let faceSizeRow = SettingsSliderRow(
         title: "时钟大小", value: 224, range: 140...360, suffix: "",
         lowText: "140 · 小巧", highText: "360 · 大号", help: "调整整个表盘的大小。")
@@ -90,7 +102,11 @@ final class AdvancedSettingsWindowController: NSWindowController {
         title: "大字大小", value: 100, range: 40...100,
         lowText: "40% · 较小", highText: "100% · 最大", help: "相对于表盘内可用空间的大小，数字始终居中。")
     var settings: ClockSettings { didSet { refresh() } }
+    var clockIsVisible = true { didSet { refresh() } }
     var onSettingsChanged: ((ClockSettings) -> Void)?
+    var onToggleVisibility: (() -> Void)?
+    var onMoveToCurrentScreen: (() -> Void)?
+    var onQuit: (() -> Void)?
 
     init(settings: ClockSettings) {
         self.settings = settings.normalized()
@@ -121,6 +137,18 @@ final class AdvancedSettingsWindowController: NSWindowController {
         title.font = .systemFont(ofSize: 20, weight: .semibold)
         let subtitle = note("调整会立即生效，并自动保存。")
         let header = stack([title, subtitle], spacing: 5)
+
+        lockButton.target = self
+        lockButton.action = #selector(lockChanged)
+        visibilityButton.target = self
+        visibilityButton.action = #selector(visibilityChanged)
+        moveToScreenButton.target = self
+        moveToScreenButton.action = #selector(moveToCurrentScreen)
+        moveToScreenButton.bezelStyle = .rounded
+        let visibilityRow = NSStackView(views: [visibilityButton, NSView(), moveToScreenButton])
+        visibilityRow.orientation = .horizontal
+        visibilityRow.alignment = .centerY
+        let general = stack([heading("常规"), transparencyRow, lockButton, visibilityRow])
 
         stylePopup.addItems(withTitles: ClockStyle.allCases.map(\.menuTitle))
         stylePopup.target = self
@@ -156,9 +184,38 @@ final class AdvancedSettingsWindowController: NSWindowController {
         let done = NSButton(title: "完成", target: self, action: #selector(closeSettings))
         done.bezelStyle = .rounded
         done.keyEquivalent = "\r"
-        let footer = NSStackView(views: [NSView(), done])
+        quitButton.target = self
+        quitButton.action = #selector(quitApp)
+        quitButton.bezelStyle = .rounded
+        let footer = NSStackView(views: [quitButton, NSView(), done])
         footer.orientation = .horizontal
-        let layout = stack([header, separator(), dial, separator(), details, separator(), minutes, footer], spacing: 16)
+        let form = stack([general, separator(), dial, separator(), details, separator(), minutes], spacing: 16)
+        form.translatesAutoresizingMaskIntoConstraints = false
+        let document = SettingsDocumentView(frame: CGRect(x: 0, y: 0, width: 452, height: 0))
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(form)
+        NSLayoutConstraint.activate([
+            form.topAnchor.constraint(equalTo: document.topAnchor),
+            form.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            form.trailingAnchor.constraint(equalTo: document.trailingAnchor, constant: -12),
+            form.bottomAnchor.constraint(equalTo: document.bottomAnchor)
+        ])
+        let formHeight = form.fittingSize.height
+        document.setFrameSize(NSSize(width: 452, height: formHeight))
+        let scroll = settingsScrollView
+        scroll.borderType = .noBorder
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.documentView = document
+        NSLayoutConstraint.activate([
+            document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+            document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor)
+        ])
+        let availableHeight = (NSScreen.main?.visibleFrame.height ?? 900) - 200
+        scroll.heightAnchor.constraint(equalToConstant: min(formHeight, max(300, min(560, availableHeight)))).isActive = true
+        let layout = stack([header, separator(), scroll, separator(), footer], spacing: 16)
         layout.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(layout)
         NSLayoutConstraint.activate([
@@ -169,6 +226,7 @@ final class AdvancedSettingsWindowController: NSWindowController {
         ])
         let height = layout.fittingSize.height + 44
         window.setContentSize(NSSize(width: 500, height: height))
+        transparencyRow.onChange = { [weak self] value in self?.change { $0.transparency = value } }
         faceSizeRow.onChange = { [weak self] value in self?.change { $0.faceSize = value } }
         minuteOpacityRow.onChange = { [weak self] value in self?.change { $0.minuteNumeralOpacity = value } }
         minuteSizeRow.onChange = { [weak self] value in self?.change { $0.minuteNumeralSize = value } }
@@ -213,6 +271,9 @@ final class AdvancedSettingsWindowController: NSWindowController {
     }
 
     private func refresh() {
+        transparencyRow.update(settings.transparency)
+        lockButton.state = settings.isLocked ? .on : .off
+        visibilityButton.state = clockIsVisible ? .on : .off
         stylePopup.selectItem(at: ClockStyle.allCases.firstIndex(of: settings.style) ?? 0)
         appearancePopup.selectItem(at: ClockAppearance.allCases.firstIndex(of: settings.appearance) ?? 0)
         secondsButton.state = settings.showsSeconds ? .on : .off
@@ -237,5 +298,9 @@ final class AdvancedSettingsWindowController: NSWindowController {
     @objc private func secondsChanged() { change { $0.showsSeconds = secondsButton.state == .on } }
     @objc private func dateChanged() { change { $0.showsDate = dateButton.state == .on } }
     @objc private func minuteNumeralsChanged() { change { $0.showsMinuteNumerals = minuteNumeralsButton.state == .on } }
+    @objc private func lockChanged() { change { $0.isLocked = lockButton.state == .on } }
+    @objc private func visibilityChanged() { onToggleVisibility?() }
+    @objc private func moveToCurrentScreen() { onMoveToCurrentScreen?() }
+    @objc private func quitApp() { onQuit?() }
     @objc private func closeSettings() { close() }
 }
