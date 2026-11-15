@@ -144,11 +144,15 @@ final class TimerRowView: NSView {
         kindButton.toolTip = durationMode ? "时长 · 点击切换为到点时间" : "到点时间 · 点击切换为时长"
         kindButton.setAccessibilityLabel(kindButton.toolTip)
         resetButton.isHidden = editing || timer.state == .running
+        var statusHelp: String?
         if let error { statusLabel.stringValue = error }
         else {
             switch timer.state {
             case .idle:
-                if editingDuration && durationInput.remainingSeconds > 0 {
+                if editingDuration, let preserved = durationInput.preservedDuration {
+                    statusLabel.stringValue = "原时长：\(settings.timerDisplayFormat.string(seconds: preserved, countingDown: timer.countsDown))"
+                    statusHelp = "原时长：\(preserved)秒。旧时长超出输入范围；未修改时完整保留，修改小时或分钟将使用新时长。"
+                } else if editingDuration && durationInput.remainingSeconds > 0 {
                     statusLabel.stringValue = "另含 \(durationInput.remainingSeconds)秒"
                 } else { statusLabel.stringValue = "" }
             case .running: statusLabel.stringValue = timer.isOvertime ? "时间到了 · 正在累计超时" : (timer.mode == .elapsed ? "正在累计" : "倒计时中 · 到时通知")
@@ -156,7 +160,7 @@ final class TimerRowView: NSView {
             case .completed: statusLabel.stringValue = "时间到了"
             }
         }
-        statusLabel.toolTip = error ?? statusLabel.stringValue
+        statusLabel.toolTip = error ?? statusHelp ?? statusLabel.stringValue
         statusLabel.isHidden = statusLabel.stringValue.isEmpty
         applyAppearance()
     }

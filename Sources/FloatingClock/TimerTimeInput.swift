@@ -26,6 +26,7 @@ final class TimerNumberInput: NSView, NSTextFieldDelegate {
     let stepper = NSStepper()
     private let unitLabel: NSTextField
     private let maximum: Int
+    private var isStepping = false
     var onChange: (() -> Void)?
     var onTextChange: ((String) -> Void)?
     var onSubmit: (() -> Void)?
@@ -108,11 +109,15 @@ final class TimerNumberInput: NSView, NSTextFieldDelegate {
     func controlTextDidEndEditing(_ obj: Notification) {
         field.integerValue = min(maximum, max(0, value))
         stepper.integerValue = field.integerValue
-        onChange?()
+        if !isStepping { onChange?() }
     }
 
     func controlTextDidChange(_ obj: Notification) {
-        onTextChange?(field.currentEditor()?.string ?? field.stringValue)
+        let text = field.currentEditor()?.string ?? field.stringValue
+        if let number = Int(text), (0...maximum).contains(number) {
+            stepper.integerValue = number
+        }
+        onTextChange?(text)
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -124,8 +129,12 @@ final class TimerNumberInput: NSView, NSTextFieldDelegate {
 
     @objc private func step() {
         let selected = stepper.integerValue
-        window?.makeFirstResponder(nil)
+        // End editing without normalizing the old value before this step is applied.
+        isStepping = true
+        defer { isStepping = false }
+        guard window?.makeFirstResponder(nil) != false else { return }
         field.integerValue = selected
+        stepper.integerValue = selected
         onChange?()
     }
 }
@@ -138,6 +147,12 @@ final class TimerTimeInput: NSStackView {
     private var targetDatePrefix = ""
     private var targetSecondsSuffix = ""
     private var updateRevision = 0
+    private var originalDuration: (seconds: TimeInterval, hours: Int, minutes: Int)?
+    var preservedDuration: TimeInterval? {
+        guard let originalDuration, hours.value == originalDuration.hours,
+              minutes.value == originalDuration.minutes else { return nil }
+        return originalDuration.seconds
+    }
     var onChange: ((String) -> Void)?
     var onSubmit: (() -> Void)?
 
@@ -188,8 +203,13 @@ final class TimerTimeInput: NSStackView {
         let whole = Int(seconds)
         remainingSeconds = seconds.truncatingRemainder(dividingBy: 60)
         let displayedHours = min(9_999, whole / 3600)
+        let remainingMinutes = (whole - displayedHours * 3600) / 60
+        let displayedMinutes = min(9_999, remainingMinutes)
+        // Older versions accepted durations larger than both four-digit fields.
+        // Keep the exact value until the user changes one of the displayed numbers.
+        originalDuration = remainingMinutes > displayedMinutes ? (seconds, displayedHours, displayedMinutes) : nil
         hours.update(value: displayedHours)
-        minutes.update(value: (whole - displayedHours * 3600) / 60)
+        minutes.update(value: displayedMinutes)
     }
 
     func apply(ink: NSColor, dark: Bool) {
@@ -203,7 +223,7 @@ final class TimerTimeInput: NSStackView {
             guard (0...23).contains(hours.value), (0...59).contains(minutes.value) else { return }
             input = targetDatePrefix + String(format: "%02d:%02d", hours.value, minutes.value) + targetSecondsSuffix
         } else {
-            let total = min(TimerInputParser.maximumDuration, Double(hours.value) * 3600 + Double(minutes.value) * 60 + remainingSeconds)
+            let total = preservedDuration ?? min(TimerInputParser.maximumDuration, Double(hours.value) * 3600 + Double(minutes.value) * 60 + remainingSeconds)
             input = "\(total)秒"
         }
         onChange?(input)

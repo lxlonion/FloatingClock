@@ -597,10 +597,130 @@ enum RuntimeChecks {
         timers.onChange = previousChange
         timerPanel.makeFirstResponder(nil)
         for id in [idleDuration, idleTarget, stoppedElapsed] { timers.remove(id) }
+        checkTimerInputRegressions(check)
         let result: [String: Any] = ["passed": failures.isEmpty, "count": checks.count, "checks": checks, "failures": failures]
         let data = try! JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
         print(String(data: data, encoding: .utf8)!)
         return failures.isEmpty ? 0 : 1
+    }
+
+    private static func checkTimerInputRegressions(_ check: (Bool, String) -> Void) {
+        let suite = "FloatingClock.input-regressions.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = ClockTimerStore(defaults: defaults)
+        let scheduler = CheckTimerNotifications()
+        let panel = ClockPanel(settings: ClockSettings())
+        panel.showClock()
+        defer { panel.hideClock() }
+
+        func attach(_ timers: TimerCoordinator) {
+            panel.timerCoordinator = timers
+            timers.onChange = { [weak panel] in panel?.refreshTimers() }
+            panel.makeKey()
+        }
+        func type(_ text: String, into field: NSTextField) {
+            panel.makeFirstResponder(field)
+            field.selectText(nil)
+            if let editor = field.currentEditor() as? NSTextView {
+                editor.insertText(text, replacementRange: editor.selectedRange())
+            }
+        }
+        func settle() {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            panel.face.layoutSubtreeIfNeeded()
+        }
+        func step(_ input: TimerNumberInput, by direction: Int) -> Bool {
+            // NSStepper changes its own value before dispatching the target action.
+            // Derive the next value from the control, so stale editing state fails.
+            input.stepper.integerValue += direction
+            return input.stepper.sendAction(input.stepper.action, to: input.stepper.target)
+        }
+
+        let timers = TimerCoordinator(store: store, notifications: scheduler)
+        attach(timers)
+        let id = timers.add()!
+        let row = panel.timerTray.rows[0]
+        for kind in [ClockTimerInput.duration, .targetTime] {
+            for editsHours in [false, true] {
+                for direction in [-1, 1] {
+                    panel.makeFirstResponder(nil)
+                    timers.setInputKind(id, kind: kind)
+                    timers.editInput(id, text: kind == .duration ? "5" : "18:35")
+                    settle()
+                    let input = kind == .duration ? row.durationInput : row.targetInput
+                    let number = editsHours ? input.hours : input.minutes
+                    let typed = editsHours ? 9 : 40
+                    type(String(typed), into: number.field)
+                    let adjusted = step(number, by: direction)
+                    settle()
+                    let expected = typed + direction
+                    let expectedInput = editsHours ? String(format: "%02d:35", expected) : String(format: "18:%02d", expected)
+                    let correctModel = kind == .targetTime ? timers.timers[0].input == expectedInput :
+                        (try? TimerInputParser.duration(timers.timers[0].input)) == Double(editsHours ? expected * 3600 + 300 : expected * 60)
+                    check(adjusted && correctModel && number.value == expected && number.stepper.integerValue == expected && timers.timers[0].state == .idle,
+                          "\(kind) \(editsHours ? "hour" : "minute") arrow \(direction) uses the active typed value and leaves the timer idle")
+                }
+            }
+        }
+        timers.setInputKind(id, kind: .duration)
+        timers.editInput(id, text: "5")
+        type("10", into: row.durationInput.minutes.field)
+        let firstStep = step(row.durationInput.minutes, by: 1)
+        let secondStep = step(row.durationInput.minutes, by: 1)
+        settle()
+        check(firstStep && secondStep && (try? TimerInputParser.duration(timers.timers[0].input)) == 720,
+              "typing ten minutes then pressing up twice advances to twelve minutes")
+        timers.editInput(id, text: "1分钟30秒")
+        type("90", into: row.durationInput.minutes.field)
+        let normalizedStep = step(row.durationInput.minutes, by: 1)
+        settle()
+        check(normalizedStep && (try? TimerInputParser.duration(timers.timers[0].input)) == 5490 &&
+              row.durationInput.hours.value == 1 && row.durationInput.minutes.value == 31,
+              "stepping ninety typed minutes normalizes once and preserves legacy seconds")
+        timers.remove(id)
+
+        for text in ["999999", "999998分钟30.5秒"] {
+            var saved = ClockTimer()
+            saved.input = text
+            store.save([saved])
+            let restored = TimerCoordinator(store: store, notifications: scheduler)
+            attach(restored)
+            let legacy = panel.timerTray.rows[0]
+            let seconds = try! TimerInputParser.duration(text)
+            check(!legacy.statusLabel.isHidden && legacy.statusLabel.stringValue.contains("99999"),
+                  "legacy duration \(text) visibly identifies the preserved original value")
+            panel.makeFirstResponder(legacy.durationInput.minutes.field)
+            panel.makeFirstResponder(nil)
+            settle()
+            check((try? TimerInputParser.duration(restored.timers[0].input)) == seconds,
+                  "focusing and leaving an oversized legacy duration preserves its full value")
+            legacy.primaryButton.performClick(nil)
+            check(restored.timers[0].state == .running && restored.timers[0].duration == seconds &&
+                  store.load().first?.duration == seconds && scheduler.scheduled.last?.duration == seconds,
+                  "starting legacy duration \(text) preserves its full value in storage and notification scheduling")
+            legacy.primaryButton.performClick(nil)
+            legacy.resetButton.performClick(nil)
+            legacy.primaryButton.performClick(nil)
+            check(restored.timers[0].duration == seconds,
+                  "resetting and restarting legacy duration \(text) does not truncate it")
+            legacy.primaryButton.performClick(nil)
+            legacy.resetButton.performClick(nil)
+            type("1", into: legacy.durationInput.hours.field)
+            legacy.primaryButton.performClick(nil)
+            let replacement = 3600 + 9999 * 60 + seconds.truncatingRemainder(dividingBy: 60)
+            check(restored.timers[0].duration == replacement,
+                  "explicitly editing legacy duration \(text) replaces it with the new fields and retains its seconds")
+            legacy.primaryButton.performClick(nil)
+            legacy.resetButton.performClick(nil)
+            restored.editInput(saved.id, text: text)
+            restored.setInputKind(saved.id, kind: .targetTime)
+            restored.setInputKind(saved.id, kind: .duration)
+            legacy.primaryButton.performClick(nil)
+            check(restored.timers[0].duration == 300,
+                  "switching input modes clears the preserved legacy duration \(text)")
+            restored.remove(saved.id)
+        }
     }
 
     static func renderPreview(to path: String) throws {
