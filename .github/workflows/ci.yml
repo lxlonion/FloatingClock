@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests
+        run: bash scripts/test.sh
+      - name: Build application
+        run: bash scripts/build.sh
+      - name: Verify application signature
+        run: codesign --verify --deep --strict dist/FloatingClock.app

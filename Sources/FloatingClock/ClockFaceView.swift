@@ -79,6 +79,10 @@ final class ClockFaceView: NSView {
         let radius: CGFloat = bounds.height > (dialFrame ?? bounds).height ? 22 : 38 * scale
         let cardPath = NSBezierPath(roundedRect: backgroundCard, xRadius: radius, yRadius: radius)
 
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        context.saveGState()
+        context.setAlpha(settings.backgroundAlpha / settings.contentAlpha)
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
         NSGraphicsContext.saveGraphicsState()
         let shadow = NSShadow()
         shadow.shadowColor = NSColor.black.withAlphaComponent(dark ? 0.25 : 0.13)
@@ -91,6 +95,8 @@ final class ClockFaceView: NSView {
         (dark ? NSColor.white.withAlphaComponent(0.09) : NSColor.white.withAlphaComponent(0.8)).setStroke()
         cardPath.lineWidth = 1
         cardPath.stroke()
+        context.endTransparencyLayer()
+        context.restoreGState()
 
         for index in 0..<60 {
             if settings.style == .cardinalNumbers && [0, 1, 14].contains(index % 15) { continue }

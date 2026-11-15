@@ -11,6 +11,7 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         didSet { timerTray.coordinator = timerCoordinator; refreshTimers() }
     }
     private var ticker: Timer?
+    private var pointerTracker: Timer?
     private var settings: ClockSettings
     private var pointerInside = false
     private var layingOut = false
@@ -18,12 +19,14 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
     private var footerHeight: CGFloat = 0
     var onPositionChanged: ((CGPoint) -> Void)?
     var onQuickMenuRequested: ((NSView) -> Void)?
+    var mouseLocationProvider: () -> CGPoint = { NSEvent.mouseLocation }
 
     override var canBecomeKey: Bool { !settings.isLocked && !(timerCoordinator?.timers.isEmpty ?? true) }
     override var canBecomeMain: Bool { false }
     var clockScreenFrame: CGRect { convertToScreen(face.dialFrame ?? face.bounds) }
 
-    init(settings: ClockSettings) {
+    init(settings value: ClockSettings) {
+        let settings = value.normalized()
         self.settings = settings
         let side = settings.faceSize + ClockLayout.padding * 2
         let visibleFrames = NSScreen.screens.map(\.visibleFrame)
@@ -57,8 +60,9 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         }
         face.onDragFinished = { [weak self] in self?.constrainAndSavePosition() }
         face.onHoverChanged = { [weak self] inside in
-            self?.pointerInside = inside
-            self?.updateQuickAccess()
+            guard let self, !self.settings.isLocked else { return }
+            self.pointerInside = inside
+            self.updateQuickAccess()
         }
         recordingButton.isRecordingEntry = true
         recordingButton.isBordered = false
@@ -85,7 +89,9 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         let side = settings.faceSize + ClockLayout.padding * 2
         let origin = CGPoint(x: previousDial.midX - side / 2, y: previousDial.midY - side / 2)
         let clamped = ClockLayout.clampedOrigin(origin, size: side, screens: NSScreen.screens.map(\.visibleFrame))
-        alphaValue = settings.alpha
+        // Apply content opacity once at the window, including native field
+        // editors. The background supplies its own relative opacity when drawn.
+        alphaValue = settings.contentAlpha
         ignoresMouseEvents = settings.isLocked
         if settings.isLocked { makeFirstResponder(nil); resignKey() }
         face.settings = settings
@@ -95,7 +101,7 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         layoutPanel(anchoredAt: CGRect(origin: clamped, size: CGSize(width: side, height: side)))
         refreshPointerLocation()
         updateQuickAccess()
-        if isVisible { startTicker() }
+        if isVisible { startTicker(); startPointerTracking() }
     }
 
     func refreshTimers() {
@@ -122,6 +128,7 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         refreshPointerLocation()
         updateQuickAccess()
         startTicker()
+        startPointerTracking()
     }
 
     func hideClock() {
@@ -133,6 +140,8 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         orderOut(nil)
         ticker?.invalidate()
         ticker = nil
+        pointerTracker?.invalidate()
+        pointerTracker = nil
     }
 
     func moveToCurrentScreen() {
@@ -186,7 +195,7 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
     }
 
     private func refreshPointerLocation() {
-        pointerInside = isVisible && frame.contains(NSEvent.mouseLocation)
+        pointerInside = isVisible && frame.contains(mouseLocationProvider())
     }
 
     private func updateQuickAccess() {
@@ -200,16 +209,19 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         let showRecording = !settings.isLocked && isVisible && pointerInside
         recordingButton.isHidden = !showRecording
         if settings.isLocked && isVisible {
-            face.quickAccessCorner = corner
+            face.quickAccessCorner = pointerInside ? corner : nil
             quickAccessPanel.button.settings = settings
             quickAccessPanel.button.faceScale = card.width / 224
+            quickAccessPanel.button.isHidden = !pointerInside
             quickAccessPanel.level = level
             quickAccessPanel.collectionBehavior = collectionBehavior
-            quickAccessPanel.alphaValue = max(0.7, settings.alpha)
+            quickAccessPanel.alphaValue = settings.contentAlpha
             quickAccessPanel.setFrame(convertToScreen(buttonFrame), display: true)
             if quickAccessPanel.parent !== self { addChildWindow(quickAccessPanel, ordered: .above) }
+            quickAccessPanel.ignoresMouseEvents = !pointerInside
             quickAccessPanel.orderFrontRegardless()
-            quickAccessPanel.button.setAccessibilityParent(face)
+            quickAccessPanel.display()
+            quickAccessPanel.button.setAccessibilityParent(pointerInside ? face : nil)
         } else {
             hideQuickAccess()
             face.quickAccessCorner = showRecording ? corner : nil
@@ -218,11 +230,13 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         if !timerTray.isHidden { children.append(timerTray) }
         if !timerHint.isHidden { children.append(timerHint) }
         if showRecording { children.append(recordingButton) }
-        if quickAccessPanel.isVisible { children.append(quickAccessPanel.button) }
+        if quickAccessPanel.isEntryVisible { children.append(quickAccessPanel.button) }
         face.setAccessibilityChildren(children)
     }
 
     private func hideQuickAccess() {
+        quickAccessPanel.button.isHidden = true
+        quickAccessPanel.ignoresMouseEvents = true
         quickAccessPanel.button.setAccessibilityParent(nil)
         if quickAccessPanel.parent === self { removeChildWindow(quickAccessPanel) }
         quickAccessPanel.orderOut(nil)
@@ -250,5 +264,22 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         ticker = timer
     }
 
-    deinit { ticker?.invalidate() }
+    private func startPointerTracking() {
+        pointerTracker?.invalidate()
+        pointerTracker = nil
+        // The locked panel passes mouse events through, so its tracking areas
+        // cannot report entry/exit. Poll position without intercepting clicks.
+        guard settings.isLocked && isVisible else { return }
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let wasInside = self.pointerInside
+            self.refreshPointerLocation()
+            if wasInside != self.pointerInside { self.updateQuickAccess() }
+        }
+        timer.tolerance = 0.01
+        RunLoop.main.add(timer, forMode: .common)
+        pointerTracker = timer
+    }
+
+    deinit { ticker?.invalidate(); pointerTracker?.invalidate() }
 }

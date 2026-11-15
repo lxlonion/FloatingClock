@@ -21,7 +21,7 @@ public struct TimerAttachmentLayout {
         let belowHeight = trayHeight + footerHeight
         isAbove = below < belowHeight && above >= trayHeight ? true :
             (above < trayHeight && below >= belowHeight ? false : clock.midY < screen.midY)
-        let width = max(clock.width, 284)
+        let width = max(clock.width, ClockLayout.minimumPanelWidth)
         let height = clock.height + trayHeight + footerHeight
         let preferredX = clock.midX - width / 2
         let preferredY = clock.minY - (isAbove ? footerHeight : trayHeight + footerHeight)

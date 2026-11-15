@@ -46,6 +46,7 @@ final class QuickAccessButton: NSButton {
 /// Only this small window receives clicks while the clock window passes them through.
 final class QuickAccessPanel: NSPanel {
     let button = QuickAccessButton(title: "+", target: nil, action: nil)
+    var isEntryVisible: Bool { isVisible && !button.isHidden }
     var onOpen: ((NSView) -> Void)?
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }

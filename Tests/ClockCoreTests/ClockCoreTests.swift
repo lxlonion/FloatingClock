@@ -3,6 +3,41 @@ import CoreGraphics
 @testable import ClockCore
 
 final class ClockCoreTests: XCTestCase {
+    func testMinimumClockSizeMatchesTheTimerWidthAndMigratesOldSizes() throws {
+        XCTAssertEqual(ClockSettings().faceSize + Double(ClockLayout.padding * 2), Double(ClockLayout.minimumPanelWidth))
+        for size in [0.0, 140, 224, 259, 260, 300, 360, 420, 500] {
+            let saved = Data("{\"faceSize\":\(size)}".utf8)
+            let settings = try JSONDecoder().decode(ClockSettings.self, from: saved).normalized()
+            XCTAssertEqual(settings.faceSize, min(420, max(260, size)))
+            let dial = CGRect(x: 100, y: 500, width: settings.faceSize + 24, height: settings.faceSize + 24)
+            let layout = TimerAttachmentLayout(clock: dial, trayHeight: 100, screen: CGRect(x: 0, y: 0, width: 1440, height: 900))
+            XCTAssertEqual(layout.frame.width, dial.width)
+            XCTAssertEqual(layout.dialFrame.minX, 0)
+        }
+    }
+
+    func testContentOpacityUsesSmoothQuadraticCompensationAndStaysVisible() {
+        var settings = ClockSettings()
+        var previous = 1.0
+        for transparency in 0...90 {
+            settings.transparency = Double(transparency)
+            let content = settings.contentAlpha
+            XCTAssertEqual(settings.backgroundAlpha, 1 - Double(transparency) / 100, accuracy: 0.000001)
+            XCTAssertGreaterThanOrEqual(content, settings.backgroundAlpha)
+            XCTAssertLessThanOrEqual(content, settings.backgroundAlpha + 0.100001)
+            XCTAssertGreaterThanOrEqual(content, 0.199999)
+            XCTAssertLessThanOrEqual(content, previous)
+            previous = content
+        }
+        for (transparency, background, content) in [(0.0, 1.0, 1.0), (45, 0.55, 0.625), (80, 0.2, 0.2987654321), (90, 0.1, 0.2)] {
+            settings.transparency = transparency
+            XCTAssertEqual(settings.backgroundAlpha, background, accuracy: 0.000001)
+            XCTAssertEqual(settings.contentAlpha, content, accuracy: 0.000001)
+        }
+        settings.transparency = .nan
+        XCTAssertTrue(settings.contentAlpha.isFinite)
+    }
+
     func testQuickAccessChoosesOppositeHorizontalCornerInEachScreenQuadrant() {
         let screen = CGRect(x: 0, y: 25, width: 1440, height: 875)
         for (x, y, expected) in [(40.0, 600.0, ClockCorner.topRight), (1100, 600, .topLeft),
@@ -15,7 +50,7 @@ final class ClockCoreTests: XCTestCase {
         let screen = CGRect(x: -1920, y: 1080, width: 1920, height: 1080)
         XCTAssertEqual(QuickAccessLayout.corner(for: CGRect(x: -1880, y: 1850, width: 248, height: 248), on: screen), .topRight)
         XCTAssertEqual(QuickAccessLayout.corner(for: CGRect(x: -300, y: 1120, width: 248, height: 248), on: screen), .bottomLeft)
-        for side in [140.0, 164, 224, 284, 360] {
+        for side in [140.0, 164, 224, 284, 360, 420] {
             let card = CGRect(x: 12, y: 12, width: side, height: side)
             for corner in ClockCorner.allCases {
                 let button = QuickAccessLayout.buttonFrame(in: card, corner: corner)
@@ -41,8 +76,9 @@ final class ClockCoreTests: XCTestCase {
         settings.transparency = 100
         settings.faceSize = -1
         XCTAssertEqual(settings.normalized().transparency, 90)
-        XCTAssertEqual(settings.alpha, 0.1, accuracy: 0.0001)
-        XCTAssertEqual(settings.normalized().faceSize, 140)
+        XCTAssertEqual(settings.backgroundAlpha, 0.1, accuracy: 0.0001)
+        XCTAssertEqual(settings.contentAlpha, 0.2, accuracy: 0.0001)
+        XCTAssertEqual(settings.normalized().faceSize, 260)
         settings.transparency = .nan
         settings.origin = StoredPoint(x: .infinity, y: 10)
         XCTAssertEqual(settings.normalized().transparency, 20)
@@ -134,7 +170,7 @@ final class ClockCoreTests: XCTestCase {
         settings.minuteNumeralOpacity = 120
         XCTAssertEqual(settings.normalized().minuteNumeralOpacity, 100)
         XCTAssertEqual(settings.minuteNumeralAlpha, 1)
-        XCTAssertEqual(settings.alpha, 0.37, accuracy: 0.0001)
+        XCTAssertEqual(settings.backgroundAlpha, 0.37, accuracy: 0.0001)
         settings.minuteNumeralOpacity = -10
         XCTAssertEqual(settings.minuteNumeralAlpha, 0)
         settings.minuteNumeralOpacity = .nan

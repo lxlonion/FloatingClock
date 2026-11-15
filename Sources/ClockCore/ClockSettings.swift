@@ -24,7 +24,7 @@ public struct StoredPoint: Codable, Equatable {
 
 public struct ClockSettings: Codable, Equatable {
     public var transparency: Double = 20
-    public var faceSize: Double = 224
+    public var faceSize: Double = Double(ClockLayout.minimumFaceSize)
     public var appearance: ClockAppearance = .light
     public var style: ClockStyle = .minimal
     public var showsMinuteNumerals = false
@@ -62,13 +62,20 @@ public struct ClockSettings: Codable, Equatable {
         origin = try values.decodeIfPresent(StoredPoint.self, forKey: .origin)
     }
 
-    public var alpha: Double { 1 - normalized().transparency / 100 }
+    public var backgroundAlpha: Double { 1 - normalized().transparency / 100 }
+    public var contentAlpha: Double {
+        let transparency = normalized().transparency
+        let progress = transparency / 90
+        // A quadratic compensation grows smoothly from zero to ten percentage
+        // points, keeping content at 20% opacity at maximum transparency.
+        return 1 - transparency / 100 + 0.1 * progress * (2 - progress)
+    }
     public var minuteNumeralAlpha: Double { normalized().minuteNumeralOpacity / 100 }
 
     public func normalized() -> Self {
         var result = self
         result.transparency = transparency.isFinite ? min(90, max(0, transparency.rounded())) : 20
-        result.faceSize = faceSize.isFinite ? min(360, max(140, faceSize)) : 224
+        result.faceSize = faceSize.isFinite ? min(Double(ClockLayout.maximumFaceSize), max(Double(ClockLayout.minimumFaceSize), faceSize)) : Double(ClockLayout.minimumFaceSize)
         result.minuteNumeralOpacity = minuteNumeralOpacity.isFinite ? min(100, max(0, minuteNumeralOpacity.rounded())) : 40
         result.minuteNumeralSize = minuteNumeralSize.isFinite ? min(100, max(40, minuteNumeralSize.rounded())) : 100
         if let origin, !origin.x.isFinite || !origin.y.isFinite { result.origin = nil }

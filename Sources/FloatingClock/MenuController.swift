@@ -6,10 +6,10 @@ final class PercentageMenuView: NSView {
     private let valueLabel: NSTextField
     var onChange: ((Double) -> Void)?
 
-    init(titleText: String = "透明度", initialValue: Double = 20, maximum: Double = 90,
+    init(titleText: String = "背景透明度", initialValue: Double = 20, maximum: Double = 90,
          lowText: String = "0% 不透明", highText: String = "90% 最透明",
-         accessibilityLabel: String = "时钟透明度，0% 到 90%",
-         help: String = "0% 完全不透明，90% 最透明。") {
+         accessibilityLabel: String = "时钟背景透明度，0% 到 90%",
+         help: String = "背景按设定变透明，其他内容会稍清晰，至少保留 20% 不透明度；0% 时全部不透明。") {
         slider = NSSlider(value: initialValue, minValue: 0, maxValue: maximum, target: nil, action: nil)
         valueLabel = NSTextField(labelWithString: "\(Int(initialValue))%")
         super.init(frame: CGRect(x: 0, y: 0, width: 286, height: 92))

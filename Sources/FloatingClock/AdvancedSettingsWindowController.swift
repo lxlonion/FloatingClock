@@ -91,14 +91,14 @@ final class AdvancedSettingsWindowController: NSWindowController {
     let dateButton = NSButton(checkboxWithTitle: "显示日期与星期", target: nil, action: nil)
     let minuteNumeralsButton = NSButton(checkboxWithTitle: "显示分钟大字", target: nil, action: nil)
     let transparencyRow = SettingsSliderRow(
-        title: "透明度", value: 20, range: 0...90,
-        lowText: "0% · 不透明", highText: "90% · 最透明", help: "调整整个时钟的透明度，0% 完全不透明，90% 最透明。")
+        title: "背景透明度", value: 20, range: 0...90,
+        lowText: "0% · 不透明", highText: "90% · 最透明", help: "背景按此数值变透明；指针、刻度、文字和计时器会稍清晰，至少保留 20% 不透明度。0% 时全部不透明。")
     let faceSizeRow = SettingsSliderRow(
-        title: "时钟大小", value: 224, range: 140...360, suffix: "",
-        lowText: "140 · 小巧", highText: "360 · 大号", help: "调整整个表盘的大小。")
+        title: "时钟大小", value: Double(ClockLayout.minimumFaceSize), range: Double(ClockLayout.minimumFaceSize)...Double(ClockLayout.maximumFaceSize), suffix: "",
+        lowText: "260 · 小号", highText: "420 · 大号", help: "调整整个表盘的大小，最小尺寸与计时区宽度对齐。")
     let minuteOpacityRow = SettingsSliderRow(
         title: "大字浓度", value: 40, range: 0...100,
-        lowText: "0% · 透明", highText: "100% · 实色", help: "只改变分钟大字的浓度，不影响整个时钟的透明度。")
+        lowText: "0% · 透明", highText: "100% · 实色", help: "只改变分钟大字的浓度，不影响背景透明度。")
     let minuteSizeRow = SettingsSliderRow(
         title: "大字大小", value: 100, range: 40...100,
         lowText: "40% · 较小", highText: "100% · 最大", help: "相对于表盘内可用空间的大小，数字始终居中。")

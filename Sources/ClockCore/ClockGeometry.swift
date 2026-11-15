@@ -19,6 +19,9 @@ public struct ClockAngles {
 
 public enum ClockLayout {
     public static let padding: CGFloat = 12
+    public static let minimumPanelWidth: CGFloat = 284
+    public static let minimumFaceSize: CGFloat = minimumPanelWidth - padding * 2
+    public static let maximumFaceSize: CGFloat = 420
 
     /// Keep the whole clock on a connected display, including displays with negative origins.
     public static func clampedOrigin(_ origin: CGPoint, size: CGFloat, screens: [CGRect]) -> CGPoint {
