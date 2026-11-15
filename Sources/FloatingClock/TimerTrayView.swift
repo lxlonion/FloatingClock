@@ -21,10 +21,17 @@ final class TimerRowView: NSView {
     private var currentInputKind: ClockTimerInput = .duration
     private var isIdle = true
     private var isChangingKind = false
+    private var selectedAppearance: ClockAppearance = .light
+    private var accentSign = true
+    private var accentReadout = false
+    private var hasError = false
 
     init(timer: ClockTimer) {
         id = timer.id
         super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 14
+        layer?.borderWidth = 0.5
         signButton.font = .systemFont(ofSize: 20, weight: .medium)
         signButton.target = self; signButton.action = #selector(toggleSign)
         primaryButton.target = self; primaryButton.action = #selector(primary)
@@ -91,23 +98,17 @@ final class TimerRowView: NSView {
         let editing = timer.state == .idle
         isIdle = editing
         currentInputKind = timer.inputKind
+        selectedAppearance = settings.appearance
+        accentSign = timer.countsDown || timer.isOvertime
+        accentReadout = timer.isOvertime || timer.state == .completed
+        hasError = error != nil
         let editingDuration = editing && timer.inputKind == .duration
-        let dark = settings.appearance == .dark || (settings.appearance == .system && effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
-        let ink = dark ? NSColor(calibratedWhite: 0.94, alpha: 1) : NSColor(calibratedWhite: 0.17, alpha: 1)
-        wantsLayer = true
-        layer?.backgroundColor = ink.withAlphaComponent(dark ? 0.055 : 0.035).cgColor
-        layer?.cornerRadius = 14
-        layer?.borderWidth = 0.5
-        layer?.borderColor = ink.withAlphaComponent(0.06).cgColor
         durationInput.isHidden = !editingDuration
         targetInput.isHidden = !editing || timer.inputKind != .targetTime
         timeField.isHidden = editing
-        durationInput.apply(ink: ink, dark: dark)
-        targetInput.apply(ink: ink, dark: dark)
         if editingDuration { durationInput.update(input: timer.input) }
         if editing && timer.inputKind == .targetTime { targetInput.update(input: timer.input) }
         signButton.title = timer.countsDown ? "+" : "−"
-        signButton.contentTintColor = timer.countsDown || timer.isOvertime ? .systemRed : ink
         signButton.isEnabled = timer.state != .running
         signButton.toolTip = "点击切换：＋ 倒计时，− 累计计时"
         signButton.setAccessibilityLabel(timer.countsDown ? "倒计时；点击切换为累计计时" : "累计计时；点击切换为倒计时")
@@ -115,21 +116,16 @@ final class TimerRowView: NSView {
         if timeField.currentEditor() == nil && timeField.stringValue != text { timeField.stringValue = text }
         timeField.isEditable = false
         timeField.isSelectable = false
-        timeField.textColor = timer.isOvertime || timer.state == .completed ? .systemRed : ink
         timeField.font = .monospacedDigitSystemFont(ofSize: settings.faceSize < 224 ? 14 : 16, weight: .medium)
         timeField.toolTip = "当前计时读数"
         let symbol = timer.state == .running ? "stop.fill" : "play.fill"
         primaryButton.image = NSImage(systemSymbolName: symbol, accessibilityDescription: timer.state == .running ? "停止计时" : "开始计时")
-        primaryButton.contentTintColor = .systemRed
         primaryButton.toolTip = timer.state == .running ? "停止并保留当前时间" : (timer.state == .paused ? "继续计时" : "开始计时")
         primaryButton.setAccessibilityLabel(primaryButton.toolTip)
         kindPopup.isHidden = !editing
         kindPopup.selectItem(at: timer.inputKind == .duration ? 0 : 1)
         kindPopup.isEnabled = timer.mode == .countdown
         resetButton.isHidden = editing || timer.state == .running
-        resetButton.contentTintColor = ink.withAlphaComponent(0.65)
-        deleteButton.contentTintColor = ink.withAlphaComponent(0.5)
-        statusLabel.textColor = error == nil ? ink.withAlphaComponent(0.55) : .systemRed
         if let error { statusLabel.stringValue = error }
         else {
             switch timer.state {
@@ -147,6 +143,31 @@ final class TimerRowView: NSView {
             }
         }
         statusLabel.toolTip = error ?? statusLabel.stringValue
+        applyAppearance()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        // Parent appearance callbacks can run before this row inherits the new
+        // appearance. Resolve its colors here, without refreshing timer state.
+        applyAppearance()
+    }
+
+    private func applyAppearance() {
+        let dark = selectedAppearance == .dark ||
+            (selectedAppearance == .system && effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
+        let ink = dark ? NSColor(calibratedWhite: 0.94, alpha: 1) : NSColor(calibratedWhite: 0.17, alpha: 1)
+        layer?.backgroundColor = ink.withAlphaComponent(dark ? 0.055 : 0.035).cgColor
+        layer?.borderColor = ink.withAlphaComponent(0.06).cgColor
+        durationInput.apply(ink: ink, dark: dark)
+        targetInput.apply(ink: ink, dark: dark)
+        signButton.contentTintColor = accentSign ? .systemRed : ink
+        timeField.textColor = accentReadout ? .systemRed : ink
+        primaryButton.contentTintColor = .systemRed
+        resetButton.contentTintColor = ink.withAlphaComponent(0.65)
+        deleteButton.contentTintColor = ink.withAlphaComponent(0.5)
+        statusLabel.textColor = hasError ? .systemRed : ink.withAlphaComponent(0.55)
+        needsDisplay = true
     }
 
     @objc private func toggleSign() { window?.makeFirstResponder(nil); onSign?() }
@@ -176,7 +197,6 @@ final class TimerTrayView: NSView {
     private let notice = NSTextField(labelWithString: "")
     private(set) var rows: [TimerRowView] = []
     var coordinator: TimerCoordinator?
-    private var currentSettings = ClockSettings()
 
     static func height(count: Int, hasNotice: Bool) -> CGFloat {
         count == 0 ? 0 : 32 + CGFloat(count) * 90 + (hasNotice ? 32 : 0)
@@ -195,7 +215,6 @@ final class TimerTrayView: NSView {
 
     func refresh(settings: ClockSettings) {
         guard let coordinator else { return }
-        currentSettings = settings
         if rows.map(\.id) != coordinator.timers.map(\.id) {
             let previousRows = rows
             let existing = Dictionary(uniqueKeysWithValues: previousRows.map { ($0.id, $0) })
@@ -231,8 +250,6 @@ final class TimerTrayView: NSView {
         }
         needsLayout = true
     }
-
-    override func viewDidChangeEffectiveAppearance() { refresh(settings: currentSettings) }
 
     override func layout() {
         super.layout()

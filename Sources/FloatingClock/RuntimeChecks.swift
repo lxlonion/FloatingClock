@@ -489,6 +489,72 @@ enum RuntimeChecks {
         check(modePickerIsAvailable && timers.timers[0].inputKind == .duration && timers.errors[targetID] == nil,
               "invalid target text leaves the mode picker available and can switch back to duration")
         timers.remove(targetRow.id)
+        let previousAppAppearance = NSApp.appearance
+        defer { NSApp.appearance = previousAppAppearance }
+        NSApp.appearance = NSAppearance(named: .aqua)
+        var themeSettings = ClockSettings()
+        themeSettings.appearance = .system
+        timerPanel.apply(themeSettings)
+        let idleDuration = timers.add()!
+        let idleTarget = timers.add()!
+        timers.setInputKind(idleTarget, kind: .targetTime)
+        let stoppedElapsed = timers.add()!
+        timers.toggleMode(stoppedElapsed)
+        timers.primaryAction(stoppedElapsed, at: Date().addingTimeInterval(-90))
+        timers.primaryAction(stoppedElapsed)
+        timerPanel.face.layoutSubtreeIfNeeded()
+        let themeRows = timerPanel.timerTray.rows
+        let activeNumber = themeRows[0].durationInput.minutes.field
+        timerPanel.makeKey()
+        timerPanel.makeFirstResponder(activeNumber)
+        activeNumber.selectText(nil)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+        let editor = activeNumber.currentEditor() as? NSTextView
+        let editorText = editor?.string
+        let editorSelection = editor?.selectedRange()
+        let unchangedTimers = timers.timers
+        let unchangedFrame = timerPanel.frame
+        var themeStateChanges = 0
+        let previousChange = timers.onChange
+        timers.onChange = { themeStateChanges += 1; previousChange?() }
+        func matchesPalette(_ color: NSColor?, dark: Bool) -> Bool {
+            guard let color = color?.usingColorSpace(.sRGB) else { return false }
+            let value = (color.redComponent + color.greenComponent + color.blueComponent) / 3
+            return dark ? value > 0.8 : value < 0.3
+        }
+        func rowsMatchPalette(dark: Bool) -> Bool {
+            let duration = themeRows[0].durationInput
+            let target = themeRows[1].targetInput
+            let inputs = [duration.hours, duration.minutes, target.hours, target.minutes]
+            return inputs.allSatisfy { input in
+                let labels = input.subviews.compactMap { $0 as? NSTextField }
+                return labels.allSatisfy { matchesPalette($0.textColor, dark: dark) }
+            } && themeRows.allSatisfy { row in
+                matchesPalette(row.statusLabel.textColor, dark: dark) &&
+                matchesPalette(row.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)), dark: dark)
+            } && matchesPalette(themeRows[2].timeField.textColor, dark: dark)
+        }
+        for dark in [true, false] {
+            NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+            check(rowsMatchPalette(dark: dark), "system \(dark ? "dark" : "light") appearance immediately updates idle inputs, units, status and stopped readout")
+            check(activeNumber.currentEditor() === editor && editor?.string == editorText && editor?.selectedRange() == editorSelection &&
+                  matchesPalette(editor?.textColor, dark: dark) && matchesPalette(editor?.insertionPointColor, dark: dark),
+                  "system \(dark ? "dark" : "light") appearance updates the active editor and caret without disturbing input")
+        }
+        check(themeStateChanges == 0 && timers.timers == unchangedTimers && timerPanel.frame == unchangedFrame &&
+              zip(themeRows, timerPanel.timerTray.rows).allSatisfy { $0 === $1 },
+              "following system appearance needs no timer state changes, replacement rows or layout changes")
+        for appearance in [ClockAppearance.dark, .light] {
+            themeSettings.appearance = appearance
+            timerPanel.apply(themeSettings)
+            NSApp.appearance = NSAppearance(named: appearance == .dark ? .aqua : .darkAqua)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+            check(rowsMatchPalette(dark: appearance == .dark), "explicit \(appearance.rawValue) appearance remains fixed when inherited appearance changes")
+        }
+        timers.onChange = previousChange
+        timerPanel.makeFirstResponder(nil)
+        for id in [idleDuration, idleTarget, stoppedElapsed] { timers.remove(id) }
         let result: [String: Any] = ["passed": failures.isEmpty, "count": checks.count, "checks": checks, "failures": failures]
         let data = try! JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
         print(String(data: data, encoding: .utf8)!)

@@ -76,6 +76,10 @@ final class TimerNumberInput: NSView, NSTextFieldDelegate {
         layer?.borderColor = ink.withAlphaComponent(0.11).cgColor
         field.textColor = ink
         unitLabel.textColor = ink.withAlphaComponent(0.5)
+        if let editor = field.currentEditor() as? NSTextView {
+            editor.textColor = ink
+            editor.insertionPointColor = ink
+        }
     }
 
     func controlTextDidEndEditing(_ obj: Notification) {
