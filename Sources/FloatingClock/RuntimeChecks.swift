@@ -288,8 +288,16 @@ enum RuntimeChecks {
         check(timerPanel.timerTray.rows.allSatisfy { $0.bounds.contains($0.convert($0.deleteButton.bounds, from: $0.deleteButton)) },
               "timer row controls fit within the expanded card")
         let row = timerPanel.timerTray.rows[0]
-        row.timeField.stringValue = "90"
-        row.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        row.durationInput.minutes.field.integerValue = 90
+        row.durationInput.minutes.controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification))
+        check(!row.durationInput.isHidden && row.timeField.isHidden && row.durationInput.hours.value == 1 && row.durationInput.minutes.value == 30,
+              "separate hour and minute fields normalize ninety minutes without starting the timer")
+        row.durationInput.hours.stepper.integerValue = 2
+        _ = row.durationInput.hours.stepper.sendAction(row.durationInput.hours.stepper.action, to: row.durationInput.hours.stepper.target)
+        check((try? TimerInputParser.duration(timers.timers[0].input)) == 9000 && scheduler.scheduled.isEmpty,
+              "native hour stepper updates the saved duration without starting a timer")
+        row.durationInput.hours.stepper.integerValue = 1
+        _ = row.durationInput.hours.stepper.sendAction(row.durationInput.hours.stepper.action, to: row.durationInput.hours.stepper.target)
         row.primaryButton.performClick(nil)
         check(timers.timers[0].state == .running && scheduler.scheduled.last?.duration == 5400,
               "row play action starts a 90-minute countdown and schedules a system notification")
@@ -312,7 +320,7 @@ enum RuntimeChecks {
         check(timers.timers[0].state == .paused && scheduler.cancelled.contains(row.id),
               "stop preserves remaining time and cancels its pending notification")
         row.resetButton.performClick(nil)
-        check(timers.timers[0].state == .idle && row.timeField.isEditable,
+        check(timers.timers[0].state == .idle && !row.durationInput.isHidden && row.durationInput.minutes.field.isEditable,
               "reset restores the editable input")
         row.signButton.performClick(nil)
         let beforeElapsed = scheduler.scheduled.count
@@ -368,6 +376,24 @@ enum RuntimeChecks {
         _ = advanced.timerFormatPopup.sendAction(advanced.timerFormatPopup.action, to: advanced.timerFormatPopup.target)
         check(store.load().timerDisplayFormat == .hoursMinutes && panel.face.settings.timerDisplayFormat == .hoursMinutes,
               "advanced timer format selection updates the clock and persists")
+        timerPanel.showClock()
+        for deletedIndex in 0..<3 {
+            for _ in 0..<3 { timerPanel.recordingButton.performClick(nil) }
+            timerPanel.face.layoutSubtreeIfNeeded()
+            let removed = timerPanel.timerTray.rows[deletedIndex].id
+            timerPanel.timerTray.rows[deletedIndex].deleteButton.performClick(nil)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            timerPanel.face.layoutSubtreeIfNeeded()
+            let tray = timerPanel.timerTray
+            let attachedRows = tray.subviews.compactMap { $0 as? TimerRowView }
+            check(timers.timers.count == 2 && tray.rows.count == 2 && attachedRows.count == 2 &&
+                  Set(attachedRows.map(\.id)) == Set(timers.timers.map(\.id)) && !attachedRows.contains { $0.id == removed },
+                  "deleting row \(deletedIndex + 1) while the last input is focused leaves exactly two attached rows")
+            check(tray.rows.allSatisfy { tray.bounds.contains($0.frame) && $0.frame.height == 84 } &&
+                  !tray.rows[0].frame.intersects(tray.rows[1].frame),
+                  "deleting row \(deletedIndex + 1) keeps the two remaining row frames separate inside the tray")
+            for id in timers.timers.map(\.id) { timers.remove(id) }
+        }
         let result: [String: Any] = ["passed": failures.isEmpty, "count": checks.count, "checks": checks, "failures": failures]
         let data = try! JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
         print(String(data: data, encoding: .utf8)!)
@@ -406,9 +432,8 @@ enum RuntimeChecks {
                     let elapsed = timers.add()!
                     timers.toggleMode(elapsed)
                     timers.primaryAction(elapsed, at: Date().addingTimeInterval(-1340))
-                    let target = timers.add()!
-                    timers.setInputKind(target, kind: .targetTime)
-                    timers.editInput(target, text: "18:30")
+                    let editable = timers.add()!
+                    timers.editInput(editable, text: "90")
                     panel.face.fixedDate = ISO8601DateFormatter().date(from: "2026-11-14T10:15:36+08:00")
                     panel.appearance = NSAppearance(named: appearance == .dark ? .darkAqua : .aqua)
                     panel.recordingButton.isHidden = false
@@ -420,6 +445,19 @@ enum RuntimeChecks {
                     let data = bitmap.representation(using: .png, properties: [:])!
                     let side = above ? "above" : "below"
                     try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("timers-\(appearance.rawValue)-\(Int(size))-\(side).png"))
+                    if size == 224 {
+                        panel.showClock()
+                        panel.makeKey()
+                        panel.makeFirstResponder(panel.timerTray.rows[2].durationInput.minutes.field)
+                        panel.timerTray.rows[0].deleteButton.performClick(nil)
+                        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+                        panel.recordingButton.isHidden = false
+                        panel.face.layoutSubtreeIfNeeded()
+                        let reduced = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+                        panel.appearance?.performAsCurrentDrawingAppearance { view.cacheDisplay(in: view.bounds, to: reduced) }
+                        try reduced.representation(using: .png, properties: [:])!.write(
+                            to: URL(fileURLWithPath: directory).appendingPathComponent("timers-after-removal-\(appearance.rawValue)-\(side).png"))
+                    }
                     panel.hideClock()
                 }
             }

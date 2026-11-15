@@ -209,8 +209,8 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         makeKey()
         face.layoutSubtreeIfNeeded()
         if let row = timerTray.rows.first(where: { $0.id == id }) {
-            makeFirstResponder(row.timeField)
-            row.timeField.selectText(nil)
+            makeFirstResponder(row.durationInput.minutes.field)
+            row.durationInput.minutes.field.selectText(nil)
         }
     }
 
