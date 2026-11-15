@@ -293,6 +293,43 @@ enum RuntimeChecks {
         check(timerPanel.timerTray.rows.allSatisfy { $0.bounds.contains($0.convert($0.deleteButton.bounds, from: $0.deleteButton)) },
               "timer row controls fit within the expanded card")
         let row = timerPanel.timerTray.rows[0]
+        func stackedButtons(in row: TimerRowView) -> Bool {
+            let left = [row.signButton, row.kindButton, row.resetButton].filter { !$0.isHidden }
+                .map { row.convert($0.bounds, from: $0) }
+            let right = [row.primaryButton, row.deleteButton].map { row.convert($0.bounds, from: $0) }
+            func validColumn(_ frames: [CGRect]) -> Bool {
+                frames.allSatisfy { row.bounds.contains($0) && abs($0.midX - frames[0].midX) < 1 } &&
+                zip(frames, frames.dropFirst()).allSatisfy { !$0.intersects($1) }
+            }
+            let leftBounds = left.reduce(CGRect.null) { $0.union($1) }
+            let rightBounds = right.reduce(CGRect.null) { $0.union($1) }
+            return validColumn(left) && validColumn(right) && abs(leftBounds.midY - rightBounds.midY) < 1 &&
+                abs(leftBounds.midY - row.bounds.midY) < 1
+        }
+        timerPanel.makeFirstResponder(row.durationInput.minutes.field)
+        row.durationInput.minutes.field.selectText(nil)
+        if let editor = row.durationInput.minutes.field.currentEditor() as? NSTextView {
+            editor.insertText("9999", replacementRange: editor.selectedRange())
+            editor.insertText("9", replacementRange: NSRange(location: editor.string.utf16.count, length: 0))
+        }
+        let fifthDigitWasRejected = row.durationInput.minutes.field.currentEditor()?.string == "9999"
+        row.durationInput.minutes.field.selectText(nil)
+        if let editor = row.durationInput.minutes.field.currentEditor() as? NSTextView {
+            editor.insertText("1234567", replacementRange: editor.selectedRange())
+        }
+        check(fifthDigitWasRejected && row.durationInput.minutes.field.currentEditor()?.string == "9999",
+              "number fields immediately reject a fifth digit and a paste longer than four digits")
+        timerPanel.makeFirstResponder(nil)
+        row.durationInput.hours.update(value: 9999)
+        row.durationInput.minutes.update(value: 9999)
+        row.durationInput.commit()
+        timerPanel.face.layoutSubtreeIfNeeded()
+        let fourDigitWidth = ceil("9999".size(withAttributes: [.font: row.durationInput.hours.field.font!]).width) + 4
+        check(stackedButtons(in: row) && timerPanel.frame.width == 284 && [row.durationInput.hours, row.durationInput.minutes].allSatisfy { input in
+            input.field.bounds.width >= fourDigitWidth && row.bounds.contains(row.convert(input.stepper.bounds, from: input.stepper))
+        } && row.durationInput.hours.value == 9999 && row.durationInput.minutes.value == 9999,
+              "both four-digit inputs fit at the original window width with buttons stacked on each side")
+        timers.editInput(row.id, text: "5")
         row.durationInput.minutes.field.integerValue = 90
         row.durationInput.minutes.controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification))
         check(!row.durationInput.isHidden && row.timeField.isHidden && row.durationInput.hours.value == 1 && row.durationInput.minutes.value == 30,
@@ -324,6 +361,8 @@ enum RuntimeChecks {
         row.primaryButton.performClick(nil)
         check(timers.timers[0].state == .paused && scheduler.cancelled.contains(row.id),
               "stop preserves remaining time and cancels its pending notification")
+        timerPanel.face.layoutSubtreeIfNeeded()
+        check(!row.resetButton.isHidden && stackedButtons(in: row), "the paused timer reset icon joins the left button column")
         row.resetButton.performClick(nil)
         check(timers.timers[0].state == .idle && !row.durationInput.isHidden && row.durationInput.minutes.field.isEditable,
               "reset restores the editable input")
@@ -395,7 +434,7 @@ enum RuntimeChecks {
             check(timers.timers.count == 2 && tray.rows.count == 2 && attachedRows.count == 2 &&
                   Set(attachedRows.map(\.id)) == Set(timers.timers.map(\.id)) && !attachedRows.contains { $0.id == removed },
                   "deleting row \(deletedIndex + 1) while the last input is focused leaves exactly two attached rows")
-            check(tray.rows.allSatisfy { tray.bounds.contains($0.frame) && $0.frame.height == 84 } &&
+            check(tray.rows.allSatisfy { tray.bounds.contains($0.frame) && $0.frame.height == $0.preferredHeight } &&
                   !tray.rows[0].frame.intersects(tray.rows[1].frame),
                   "deleting row \(deletedIndex + 1) keeps the two remaining row frames separate inside the tray")
             for id in timers.timers.map(\.id) { timers.remove(id) }
@@ -642,6 +681,15 @@ enum RuntimeChecks {
                             panel.appearance?.performAsCurrentDrawingAppearance { view.cacheDisplay(in: view.bounds, to: editors) }
                             try editors.representation(using: .png, properties: [:])!.write(
                                 to: URL(fileURLWithPath: directory).appendingPathComponent("timer-editors-\(appearance.rawValue)-\(count)-\(side).png"))
+                            if count == 1 {
+                                timers.editInput(added, text: "9999小时9999分钟")
+                                panel.face.layoutSubtreeIfNeeded()
+                                let full = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+                                panel.appearance?.performAsCurrentDrawingAppearance { view.cacheDisplay(in: view.bounds, to: full) }
+                                try full.representation(using: .png, properties: [:])!.write(
+                                    to: URL(fileURLWithPath: directory).appendingPathComponent("timer-four-digits-\(appearance.rawValue)-\(side).png"))
+                                timers.editInput(added, text: "5")
+                            }
                         }
                     }
                     panel.hideClock()

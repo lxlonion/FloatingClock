@@ -1,6 +1,25 @@
 import AppKit
 import ClockCore
 
+private final class TimerNumberFormatter: NumberFormatter, @unchecked Sendable {
+    private func allows(_ text: String) -> Bool {
+        text.count <= 4 && text.allSatisfy { $0.isASCII && $0.isNumber }
+    }
+
+    override func isPartialStringValid(_ partialString: String,
+                                      newEditingString: AutoreleasingUnsafeMutablePointer<NSString?>?,
+                                      errorDescription: AutoreleasingUnsafeMutablePointer<NSString?>?) -> Bool {
+        allows(partialString)
+    }
+
+    override func isPartialStringValid(_ partialStringPtr: AutoreleasingUnsafeMutablePointer<NSString>,
+                                      proposedSelectedRange: NSRangePointer?, originalString: String,
+                                      originalSelectedRange: NSRange,
+                                      errorDescription: AutoreleasingUnsafeMutablePointer<NSString?>?) -> Bool {
+        allows(partialStringPtr.pointee as String)
+    }
+}
+
 /// A number field with a native up/down stepper and a persistent unit label.
 final class TimerNumberInput: NSView, NSTextFieldDelegate {
     let field = NSTextField(string: "0")
@@ -19,23 +38,26 @@ final class TimerNumberInput: NSView, NSTextFieldDelegate {
         wantsLayer = true
         layer?.cornerRadius = 8
         layer?.borderWidth = 0.5
-        let formatter = NumberFormatter()
+        let formatter = TimerNumberFormatter()
         formatter.numberStyle = .none
         formatter.allowsFloats = false
         formatter.minimumIntegerDigits = minimumDigits
         formatter.minimum = 0
         formatter.maximum = NSNumber(value: maximum)
+        formatter.isPartialStringValidationEnabled = true
         field.formatter = formatter
         field.isBezeled = false
         field.drawsBackground = false
         field.focusRingType = .none
-        field.font = .monospacedDigitSystemFont(ofSize: 16, weight: .semibold)
+        field.font = .monospacedDigitSystemFont(ofSize: 14, weight: .semibold)
         field.usesSingleLineMode = true
         field.cell?.sendsActionOnEndEditing = false
         field.delegate = self
         field.setAccessibilityLabel(accessibilityLabel ?? unit)
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         unitLabel.font = .systemFont(ofSize: 9, weight: .medium)
+        unitLabel.setContentHuggingPriority(.required, for: .horizontal)
+        unitLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         stepper.minValue = 0
         stepper.maxValue = Double(maximum)
         stepper.increment = 1
@@ -50,14 +72,15 @@ final class TimerNumberInput: NSView, NSTextFieldDelegate {
             addSubview(view)
         }
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(greaterThanOrEqualToConstant: 60),
-            heightAnchor.constraint(equalToConstant: 42),
-            field.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7),
-            field.trailingAnchor.constraint(equalTo: stepper.leadingAnchor, constant: -2),
-            field.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            widthAnchor.constraint(greaterThanOrEqualToConstant: 90),
+            heightAnchor.constraint(equalToConstant: 32),
+            field.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
+            field.trailingAnchor.constraint(equalTo: unitLabel.leadingAnchor, constant: -4),
+            field.centerYAnchor.constraint(equalTo: centerYAnchor),
             field.heightAnchor.constraint(equalToConstant: 21),
-            unitLabel.leadingAnchor.constraint(equalTo: field.leadingAnchor, constant: 1),
-            unitLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            field.widthAnchor.constraint(greaterThanOrEqualToConstant: ceil("9999".size(withAttributes: [.font: field.font!]).width) + 4),
+            unitLabel.firstBaselineAnchor.constraint(equalTo: field.firstBaselineAnchor),
+            unitLabel.trailingAnchor.constraint(equalTo: stepper.leadingAnchor, constant: -4),
             stepper.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
             stepper.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
@@ -120,8 +143,8 @@ final class TimerTimeInput: NSStackView {
 
     init(kind: ClockTimerInput) {
         self.kind = kind
-        hours = TimerNumberInput(unit: "h", maximum: kind == .duration ? 16_666 : 23, minimumDigits: kind == .duration ? 1 : 2, accessibilityLabel: "小时")
-        minutes = TimerNumberInput(unit: "mim", maximum: kind == .duration ? 999_999 : 59, minimumDigits: kind == .duration ? 1 : 2, accessibilityLabel: "分钟")
+        hours = TimerNumberInput(unit: "h", maximum: kind == .duration ? 9_999 : 23, minimumDigits: kind == .duration ? 1 : 2, accessibilityLabel: "小时")
+        minutes = TimerNumberInput(unit: "mim", maximum: kind == .duration ? 9_999 : 59, minimumDigits: kind == .duration ? 1 : 2, accessibilityLabel: "分钟")
         super.init(frame: .zero)
         orientation = .horizontal
         distribution = .fillEqually
@@ -164,8 +187,9 @@ final class TimerTimeInput: NSStackView {
         guard let seconds = try? TimerInputParser.duration(unsigned) else { return }
         let whole = Int(seconds)
         remainingSeconds = seconds.truncatingRemainder(dividingBy: 60)
-        hours.update(value: whole / 3600)
-        minutes.update(value: whole / 60 % 60)
+        let displayedHours = min(9_999, whole / 3600)
+        hours.update(value: displayedHours)
+        minutes.update(value: (whole - displayedHours * 3600) / 60)
     }
 
     func apply(ink: NSColor, dark: Bool) {

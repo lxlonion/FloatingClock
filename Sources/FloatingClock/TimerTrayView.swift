@@ -1,17 +1,24 @@
 import AppKit
 import ClockCore
 
+final class TimerActionButton: NSButton {
+    // Borderless image buttons have different optical insets from text buttons.
+    // Use their physical bounds so each compact column has equal, separate hits.
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
+}
+
 final class TimerRowView: NSView {
+    var preferredHeight: CGFloat { statusLabel.isHidden ? 48 : 64 }
     let id: UUID
-    let signButton = NSButton(title: "+", target: nil, action: nil)
+    let signButton = TimerActionButton(title: "+", target: nil, action: nil)
     let timeField = NSTextField(string: "")
     let durationInput = TimerTimeInput(kind: .duration)
     let targetInput = TimerTimeInput(kind: .targetTime)
-    let primaryButton = NSButton()
-    let deleteButton = NSButton()
-    let kindButton = NSButton()
+    let primaryButton = TimerActionButton()
+    let deleteButton = TimerActionButton()
+    let kindButton = TimerActionButton()
     let statusLabel = NSTextField(labelWithString: "")
-    let resetButton = NSButton(title: "重设", target: nil, action: nil)
+    let resetButton = TimerActionButton()
     var onSign: (() -> Void)?
     var onPrimary: (() -> Void)?
     var onDelete: (() -> Void)?
@@ -32,7 +39,7 @@ final class TimerRowView: NSView {
         wantsLayer = true
         layer?.cornerRadius = 14
         layer?.borderWidth = 0.5
-        signButton.font = .systemFont(ofSize: 20, weight: .medium)
+        signButton.font = .systemFont(ofSize: 17, weight: .medium)
         signButton.target = self; signButton.action = #selector(toggleSign)
         primaryButton.target = self; primaryButton.action = #selector(primary)
         deleteButton.target = self; deleteButton.action = #selector(deleteTimer)
@@ -40,8 +47,10 @@ final class TimerRowView: NSView {
         deleteButton.toolTip = "删除这组计时"
         deleteButton.setAccessibilityLabel("删除计时")
         resetButton.target = self; resetButton.action = #selector(resetTimer)
-        resetButton.font = .systemFont(ofSize: 11)
+        resetButton.image = NSImage(systemSymbolName: "arrow.counterclockwise", accessibilityDescription: "重设计时")
+        resetButton.setAccessibilityLabel("重设计时")
         resetButton.toolTip = "停止后重新设置时间"
+        resetButton.isHidden = true
         for button in [signButton, kindButton, primaryButton, deleteButton, resetButton] { button.isBordered = false }
         timeField.font = .monospacedDigitSystemFont(ofSize: 16, weight: .medium)
         timeField.isBezeled = false
@@ -66,29 +75,35 @@ final class TimerRowView: NSView {
         kindButton.target = self; kindButton.action = #selector(kindChanged)
         kindButton.imageScaling = .scaleProportionallyDown
         kindButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
-        statusLabel.font = .systemFont(ofSize: 11)
+        statusLabel.font = .systemFont(ofSize: 9)
         statusLabel.lineBreakMode = .byTruncatingTail
-        let line = NSStackView(views: [signButton, durationInput, targetInput, timeField, primaryButton, deleteButton])
-        line.orientation = .horizontal; line.alignment = .centerY; line.spacing = 5; line.distribution = .fill
-        let detail = NSStackView(views: [kindButton, statusLabel, NSView(), resetButton])
-        detail.orientation = .horizontal; detail.alignment = .centerY; detail.spacing = 4
-        for view in [line, detail] { view.translatesAutoresizingMaskIntoConstraints = false; addSubview(view) }
+        let leftControls = NSStackView(views: [signButton, kindButton, resetButton])
+        let rightControls = NSStackView(views: [primaryButton, deleteButton])
+        for column in [leftControls, rightControls] {
+            column.orientation = .vertical
+            column.alignment = .centerX
+            column.distribution = .fill
+            column.spacing = 1
+        }
+        let line = NSStackView(views: [leftControls, durationInput, targetInput, timeField, rightControls])
+        line.orientation = .horizontal; line.alignment = .centerY; line.spacing = 4; line.distribution = .fill
+        for view in [line, statusLabel] { view.translatesAutoresizingMaskIntoConstraints = false; addSubview(view) }
         NSLayoutConstraint.activate([
             line.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7),
             line.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -7),
-            line.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            line.heightAnchor.constraint(equalToConstant: 42),
-            detail.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            detail.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            detail.topAnchor.constraint(equalTo: line.bottomAnchor, constant: 5),
-            detail.heightAnchor.constraint(equalToConstant: 23),
-            signButton.widthAnchor.constraint(equalToConstant: 20),
-            primaryButton.widthAnchor.constraint(equalToConstant: 24),
-            deleteButton.widthAnchor.constraint(equalToConstant: 18),
-            kindButton.widthAnchor.constraint(equalToConstant: 22),
-            kindButton.heightAnchor.constraint(equalToConstant: 22),
-            resetButton.widthAnchor.constraint(equalToConstant: 32)
+            line.centerYAnchor.constraint(equalTo: centerYAnchor),
+            line.heightAnchor.constraint(equalToConstant: 38),
+            statusLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            statusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            statusLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+            statusLabel.heightAnchor.constraint(equalToConstant: 10),
+            leftControls.widthAnchor.constraint(equalToConstant: 20),
+            rightControls.widthAnchor.constraint(equalToConstant: 22)
         ])
+        for button in [signButton, kindButton, resetButton, primaryButton, deleteButton] {
+            button.widthAnchor.constraint(equalToConstant: 18).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 18).isActive = true
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -135,10 +150,6 @@ final class TimerRowView: NSView {
             case .idle:
                 if editingDuration && durationInput.remainingSeconds > 0 {
                     statusLabel.stringValue = "另含 \(durationInput.remainingSeconds)秒"
-                } else if timer.inputKind == .targetTime,
-                          let target = try? TimerInputParser.targetDate(timer.input, now: now) {
-                    let remaining = TimerDisplayFormat.totalMinutes.string(seconds: target.timeIntervalSince(now), countingDown: true)
-                    statusLabel.stringValue = "剩\(remaining)"
                 } else { statusLabel.stringValue = "" }
             case .running: statusLabel.stringValue = timer.isOvertime ? "时间到了 · 正在累计超时" : (timer.mode == .elapsed ? "正在累计" : "倒计时中 · 到时通知")
             case .paused: statusLabel.stringValue = timer.isOvertime ? "超时已停止 · 可继续" : "已停止 · 可继续"
@@ -178,7 +189,7 @@ final class TimerRowView: NSView {
     @objc private func toggleSign() { window?.makeFirstResponder(nil); onSign?() }
     @objc private func primary() {
         guard window?.makeFirstResponder(nil) != false else { return }
-        if isIdle && currentInputKind == .targetTime { targetInput.commit() }
+        if isIdle { (currentInputKind == .targetTime ? targetInput : durationInput).commit() }
         onPrimary?()
     }
     @objc private func deleteTimer() { window?.makeFirstResponder(nil); onDelete?() }
@@ -198,12 +209,13 @@ final class TimerRowView: NSView {
 }
 
 final class TimerTrayView: NSView {
+    private static let rowSpacing: CGFloat = 6
     private let notice = NSTextField(labelWithString: "")
     private(set) var rows: [TimerRowView] = []
     var coordinator: TimerCoordinator?
 
-    static func height(count: Int, hasNotice: Bool) -> CGFloat {
-        count == 0 ? 0 : 8 + CGFloat(count) * 90 + (hasNotice ? 32 : 0)
+    var contentHeight: CGFloat {
+        rows.isEmpty ? 0 : 8 + rows.reduce(0) { $0 + $1.preferredHeight + Self.rowSpacing } + (notice.isHidden ? 0 : 32)
     }
 
     override init(frame frameRect: NSRect) {
@@ -254,8 +266,11 @@ final class TimerTrayView: NSView {
 
     override func layout() {
         super.layout()
-        for (index, row) in rows.enumerated() {
-            row.frame = CGRect(x: 4, y: bounds.height - 8 - CGFloat(index + 1) * 90 + 6, width: bounds.width - 8, height: 84)
+        var top = bounds.height - 8
+        for row in rows {
+            row.frame = CGRect(x: 4, y: top - row.preferredHeight,
+                               width: bounds.width - 8, height: row.preferredHeight)
+            top = row.frame.minY - Self.rowSpacing
         }
         notice.frame = CGRect(x: 10, y: 8, width: bounds.width - 20, height: 18)
     }

@@ -7,8 +7,8 @@
     <key>CFBundleName</key><string>FloatingClock</string>
     <key>CFBundleDisplayName</key><string>漂浮时钟</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.5.7</string>
-    <key>CFBundleVersion</key><string>14</string>
+    <key>CFBundleShortVersionString</key><string>1.5.9</string>
+    <key>CFBundleVersion</key><string>16</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>LSUIElement</key><true/>

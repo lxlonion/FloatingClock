@@ -94,11 +94,10 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
     }
 
     func refreshTimers() {
-        let height = TimerTrayView.height(count: timerCoordinator?.timers.count ?? 0,
-                                         hasNotice: timerCoordinator?.notificationMessage != nil)
+        timerTray.refresh(settings: settings)
+        let height = timerTray.contentHeight
         let newFooterHeight: CGFloat = timerCoordinator?.timers.count == 1 ? 28 : 0
         timerHint.isHidden = newFooterHeight == 0
-        timerTray.refresh(settings: settings)
         timerTray.isHidden = height == 0
         if height != trayHeight || footerHeight != newFooterHeight {
             let dial = clockScreenFrame
