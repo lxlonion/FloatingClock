@@ -4,12 +4,28 @@ import ClockCore
 final class QuickAccessButton: NSButton {
     var settings = ClockSettings() { didSet { needsDisplay = true } }
     var faceScale: CGFloat = 1 { didSet { needsDisplay = true } }
+    var isRecordingEntry = false { didSet { needsDisplay = true } }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func rightMouseDown(with event: NSEvent) { performClick(nil) }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
     override func viewDidChangeEffectiveAppearance() { needsDisplay = true }
 
     override func draw(_ dirtyRect: NSRect) {
+        if isRecordingEntry {
+            let circle = NSBezierPath(ovalIn: bounds.insetBy(dx: 0.7, dy: 0.7))
+            NSColor.systemRed.withAlphaComponent(isHighlighted ? 0.72 : 1).setFill()
+            circle.fill()
+            let camera = CGRect(x: bounds.midX - bounds.width * 0.24, y: bounds.midY - bounds.height * 0.16,
+                                width: bounds.width * 0.32, height: bounds.height * 0.32)
+            NSColor.white.setFill()
+            NSBezierPath(roundedRect: camera, xRadius: 1.4, yRadius: 1.4).fill()
+            let lens = NSBezierPath()
+            lens.move(to: CGPoint(x: camera.maxX + 1, y: camera.midY))
+            lens.line(to: CGPoint(x: bounds.midX + bounds.width * 0.27, y: camera.maxY))
+            lens.line(to: CGPoint(x: bounds.midX + bounds.width * 0.27, y: camera.minY))
+            lens.close(); lens.fill()
+            return
+        }
         let dark = settings.appearance == .dark ||
             (settings.appearance == .system && effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
         let ink = dark ? NSColor(calibratedWhite: 0.94, alpha: 1) : NSColor(calibratedWhite: 0.17, alpha: 1)

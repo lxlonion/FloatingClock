@@ -86,6 +86,7 @@ final class AdvancedSettingsWindowController: NSWindowController {
     let quitButton = NSButton(title: "退出漂浮时钟", target: nil, action: nil)
     let stylePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     let appearancePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    let timerFormatPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     let secondsButton = NSButton(checkboxWithTitle: "显示秒针", target: nil, action: nil)
     let dateButton = NSButton(checkboxWithTitle: "显示日期与星期", target: nil, action: nil)
     let minuteNumeralsButton = NSButton(checkboxWithTitle: "显示分钟大字", target: nil, action: nil)
@@ -181,6 +182,15 @@ final class AdvancedSettingsWindowController: NSWindowController {
             note("开启后可调整浓度和大小，可叠加在任一表盘上。"),
             minuteOpacityRow, minuteSizeRow
         ])
+        timerFormatPopup.addItems(withTitles: TimerDisplayFormat.allCases.map(\.menuTitle))
+        timerFormatPopup.target = self
+        timerFormatPopup.action = #selector(timerFormatChanged)
+        timerFormatPopup.setAccessibilityLabel("计时显示格式")
+        let timers = stack([
+            heading("计时"), choiceRow("显示格式", control: timerFormatPopup),
+            note("解锁后移入时钟，点击红色按钮添加；最多三组。"),
+            note("＋ 倒计时 / 到点提醒；− 累计计时。时长可超过 60 分钟。")
+        ])
         let done = NSButton(title: "完成", target: self, action: #selector(closeSettings))
         done.bezelStyle = .rounded
         done.keyEquivalent = "\r"
@@ -189,7 +199,7 @@ final class AdvancedSettingsWindowController: NSWindowController {
         quitButton.bezelStyle = .rounded
         let footer = NSStackView(views: [quitButton, NSView(), done])
         footer.orientation = .horizontal
-        let form = stack([general, separator(), dial, separator(), details, separator(), minutes], spacing: 16)
+        let form = stack([general, separator(), dial, separator(), details, separator(), minutes, separator(), timers], spacing: 16)
         form.translatesAutoresizingMaskIntoConstraints = false
         let document = SettingsDocumentView(frame: CGRect(x: 0, y: 0, width: 452, height: 0))
         document.translatesAutoresizingMaskIntoConstraints = false
@@ -276,6 +286,7 @@ final class AdvancedSettingsWindowController: NSWindowController {
         visibilityButton.state = clockIsVisible ? .on : .off
         stylePopup.selectItem(at: ClockStyle.allCases.firstIndex(of: settings.style) ?? 0)
         appearancePopup.selectItem(at: ClockAppearance.allCases.firstIndex(of: settings.appearance) ?? 0)
+        timerFormatPopup.selectItem(at: TimerDisplayFormat.allCases.firstIndex(of: settings.timerDisplayFormat) ?? 0)
         secondsButton.state = settings.showsSeconds ? .on : .off
         dateButton.state = settings.showsDate ? .on : .off
         minuteNumeralsButton.state = settings.showsMinuteNumerals ? .on : .off
@@ -295,6 +306,7 @@ final class AdvancedSettingsWindowController: NSWindowController {
 
     @objc private func styleChanged() { change { $0.style = ClockStyle.allCases[stylePopup.indexOfSelectedItem] } }
     @objc private func appearanceChanged() { change { $0.appearance = ClockAppearance.allCases[appearancePopup.indexOfSelectedItem] } }
+    @objc private func timerFormatChanged() { change { $0.timerDisplayFormat = TimerDisplayFormat.allCases[timerFormatPopup.indexOfSelectedItem] } }
     @objc private func secondsChanged() { change { $0.showsSeconds = secondsButton.state == .on } }
     @objc private func dateChanged() { change { $0.showsDate = dateButton.state == .on } }
     @objc private func minuteNumeralsChanged() { change { $0.showsMinuteNumerals = minuteNumeralsButton.state == .on } }

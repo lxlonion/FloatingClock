@@ -33,13 +33,14 @@ public struct ClockSettings: Codable, Equatable {
     public var isLocked = false
     public var showsSeconds = true
     public var showsDate = true
+    public var timerDisplayFormat: TimerDisplayFormat = .totalMinutes
     public var origin: StoredPoint?
 
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
         case transparency, faceSize, appearance, style, showsMinuteNumerals, minuteNumeralOpacity, minuteNumeralSize
-        case isLocked, showsSeconds, showsDate, origin
+        case isLocked, showsSeconds, showsDate, timerDisplayFormat, origin
     }
 
     public init(from decoder: Decoder) throws {
@@ -57,6 +58,7 @@ public struct ClockSettings: Codable, Equatable {
         isLocked = try values.decodeIfPresent(Bool.self, forKey: .isLocked) ?? isLocked
         showsSeconds = try values.decodeIfPresent(Bool.self, forKey: .showsSeconds) ?? showsSeconds
         showsDate = try values.decodeIfPresent(Bool.self, forKey: .showsDate) ?? showsDate
+        timerDisplayFormat = (try? values.decode(TimerDisplayFormat.self, forKey: .timerDisplayFormat)) ?? timerDisplayFormat
         origin = try values.decodeIfPresent(StoredPoint.self, forKey: .origin)
     }
 

@@ -1,6 +1,19 @@
 import AppKit
 import ClockCore
 
+private final class CheckTimerNotifications: TimerNotificationScheduling {
+    var scheduled: [ClockTimer] = []
+    var cancelled: [UUID] = []
+    var message: String?
+    var deferCompletion = false
+    var pending: [(String?) -> Void] = []
+    func schedule(_ timer: ClockTimer, completion: @escaping (String?) -> Void) {
+        scheduled.append(timer)
+        if deferCompletion { pending.append(completion) } else { completion(message) }
+    }
+    func cancel(_ id: UUID) { cancelled.append(id) }
+}
+
 enum RuntimeChecks {
     /// Exercises the real AppKit menu targets and panel without touching user preferences.
     static func run() -> Int32 {
@@ -205,6 +218,7 @@ enum RuntimeChecks {
         check(advanced.secondsButton.state == .on,
               "quick seconds toggle updates advanced settings")
         controller.quickMenu.performActionForItem(at: 0)
+        panel.face.onHoverChanged?(false)
         check(panel.ignoresMouseEvents && panel.quickAccessPanel.isVisible &&
               !panel.quickAccessPanel.ignoresMouseEvents && controller.quickMenu.items[0].state == .on,
               "locked clock passes clicks through while its small plus remains interactive")
@@ -243,6 +257,108 @@ enum RuntimeChecks {
         panel.hideClock()
         check(!panel.isVisible, "clock can be hidden")
         check(!panel.quickAccessPanel.isVisible, "hiding the clock also hides its small entry")
+
+        let scheduler = CheckTimerNotifications()
+        let timerStore = ClockTimerStore(defaults: defaults)
+        let timers = TimerCoordinator(store: timerStore, notifications: scheduler)
+        let timerPanel = ClockPanel(settings: ClockSettings())
+        timerPanel.timerCoordinator = timers
+        timers.onChange = { [weak timerPanel] in timerPanel?.refreshTimers() }
+        timerPanel.showClock()
+        defer { timerPanel.hideClock() }
+        timerPanel.face.onHoverChanged?(false)
+        check(timerPanel.recordingButton.isHidden && !timerPanel.quickAccessPanel.isVisible,
+              "unlocked idle clock hides both entries outside its hover area")
+        timerPanel.face.onHoverChanged?(true)
+        check(!timerPanel.recordingButton.isHidden && !timerPanel.quickAccessPanel.isVisible,
+              "hovering unlocked clock shows only the red recording entry")
+        timerPanel.recordingButton.performClick(nil)
+        check(timers.timers.count == 1 && timerPanel.timerTray.rows.count == 1 && timerPanel.canBecomeKey,
+              "red entry adds an editable timer and allows keyboard input")
+        timerPanel.recordingButton.performClick(nil)
+        timerPanel.recordingButton.performClick(nil)
+        timerPanel.recordingButton.performClick(nil)
+        check(timers.timers.count == 3 && timerPanel.timerTray.rows.count == 3,
+              "red entry enforces a maximum of three timer groups")
+        check(timers.timers.allSatisfy { $0.state == .idle } && scheduler.scheduled.isEmpty,
+              "moving focus between new timer inputs does not start timers")
+        check(timerPanel.frame.height > timerPanel.frame.width && NSScreen.screens.contains { $0.visibleFrame.contains(timerPanel.frame) },
+              "three timers form a rectangular window kept inside the display")
+        timerPanel.face.layoutSubtreeIfNeeded()
+        check(timerPanel.timerTray.rows.allSatisfy { $0.bounds.contains($0.convert($0.deleteButton.bounds, from: $0.deleteButton)) },
+              "timer row controls fit within the expanded card")
+        let row = timerPanel.timerTray.rows[0]
+        row.timeField.stringValue = "90"
+        row.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        row.primaryButton.performClick(nil)
+        check(timers.timers[0].state == .running && scheduler.scheduled.last?.duration == 5400,
+              "row play action starts a 90-minute countdown and schedules a system notification")
+        let scheduledCount = scheduler.scheduled.count
+        var locked = ClockSettings()
+        locked.isLocked = true
+        timerPanel.apply(locked)
+        timerPanel.face.onHoverChanged?(true)
+        check(timerPanel.ignoresMouseEvents && !timerPanel.canBecomeKey && timerPanel.recordingButton.isHidden && timerPanel.quickAccessPanel.isVisible,
+              "locking expanded clock keeps only the plus entry and restores pass-through")
+        check(timers.timers[0].state == .running && scheduler.scheduled.count == scheduledCount,
+              "locking does not stop or duplicate timer notifications")
+        locked.isLocked = false
+        locked.timerDisplayFormat = .hoursMinutes
+        timerPanel.apply(locked)
+        timerPanel.face.onHoverChanged?(true)
+        check(!timerPanel.recordingButton.isHidden && !timerPanel.quickAccessPanel.isVisible && row.timeField.stringValue.hasPrefix("1时"),
+              "unlocking restores the hover recording entry and the hour-minute readout")
+        row.primaryButton.performClick(nil)
+        check(timers.timers[0].state == .paused && scheduler.cancelled.contains(row.id),
+              "stop preserves remaining time and cancels its pending notification")
+        row.resetButton.performClick(nil)
+        check(timers.timers[0].state == .idle && row.timeField.isEditable,
+              "reset restores the editable input")
+        row.signButton.performClick(nil)
+        let beforeElapsed = scheduler.scheduled.count
+        timers.primaryAction(row.id, at: Date().addingTimeInterval(-120))
+        check(timers.timers[0].mode == .elapsed && timers.timers[0].seconds(at: Date()) >= 120 && scheduler.scheduled.count == beforeElapsed,
+              "minus starts elapsed counting from zero without scheduling a countdown notification")
+        row.primaryButton.performClick(nil)
+        check(timers.timers[0].state == .paused && row.timeField.stringValue.hasPrefix("02分"),
+              "elapsed stop retains its accumulated readout")
+        row.deleteButton.performClick(nil)
+        check(timers.timers.count == 2 && !timers.timers.contains { $0.id == row.id },
+              "delete removes exactly one timer group")
+        let countdown = timerPanel.timerTray.rows[0]
+        countdown.timeField.stringValue = "1秒"
+        countdown.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        scheduler.message = "通知未开启"
+        let started = Date()
+        timers.primaryAction(countdown.id, at: started)
+        check(timers.notificationMessage == "通知未开启", "notification permission failure is surfaced in the timer card")
+        timerPanel.hideClock()
+        timers.tick(at: started.addingTimeInterval(2))
+        check(timers.timers[0].state == .completed && !timerPanel.isVisible && timerPanel.recordingButton.isHidden,
+              "hidden clock still completes countdowns at zero without reopening itself")
+        let afterCompletion = scheduler.scheduled.count
+        timers.tick(at: started.addingTimeInterval(20))
+        check(scheduler.scheduled.count == afterCompletion, "countdown completion does not send duplicate notifications")
+        countdown.deleteButton.performClick(nil)
+        timerPanel.timerTray.rows[0].deleteButton.performClick(nil)
+        let side = ClockSettings().faceSize + ClockLayout.padding * 2
+        check(timers.timers.isEmpty && timerPanel.frame.size == CGSize(width: side, height: side) && !timerPanel.canBecomeKey,
+              "deleting the last group restores the square clock and passive focus behavior")
+        scheduler.deferCompletion = true
+        let delayed = timers.add()!
+        timers.editInput(delayed, text: "1秒")
+        let delayedStart = Date()
+        timers.primaryAction(delayed, at: delayedStart)
+        timers.tick(at: delayedStart.addingTimeInterval(2))
+        scheduler.pending.last?("通知未开启")
+        check(timers.notificationMessage == "通知未开启", "late permission denial remains visible after a short countdown completes")
+        timers.remove(delayed)
+        scheduler.pending.last?("通知未开启")
+        check(timers.notificationMessage == nil && timers.timers.isEmpty, "late notification callbacks cannot restore a deleted timer or warning")
+        advanced.timerFormatPopup.selectItem(at: 1)
+        _ = advanced.timerFormatPopup.sendAction(advanced.timerFormatPopup.action, to: advanced.timerFormatPopup.target)
+        check(store.load().timerDisplayFormat == .hoursMinutes && panel.face.settings.timerDisplayFormat == .hoursMinutes,
+              "advanced timer format selection updates the clock and persists")
         let result: [String: Any] = ["passed": failures.isEmpty, "count": checks.count, "checks": checks, "failures": failures]
         let data = try! JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
         print(String(data: data, encoding: .utf8)!)
@@ -256,10 +372,56 @@ enum RuntimeChecks {
         try renderFace(to: path, settings: settings)
     }
 
+    static func renderTimerPreviews(to directory: String) throws {
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        let screen = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+        for appearance in [ClockAppearance.light, .dark] {
+            for size in [140.0, 224, 360] {
+                for above in [false, true] {
+                    let suite = "FloatingClock.preview.\(UUID())"
+                    let defaults = UserDefaults(suiteName: suite)!
+                    defer { defaults.removePersistentDomain(forName: suite) }
+                    let timers = TimerCoordinator(store: ClockTimerStore(defaults: defaults), notifications: CheckTimerNotifications())
+                    var settings = ClockSettings()
+                    settings.faceSize = size
+                    settings.transparency = 0
+                    settings.appearance = appearance
+                    settings.timerDisplayFormat = .hoursMinutes
+                    settings.origin = StoredPoint(x: screen.midX, y: above ? screen.minY + 16 : screen.maxY - size - 40)
+                    let panel = ClockPanel(settings: settings)
+                    panel.timerCoordinator = timers
+                    timers.onChange = { [weak panel] in panel?.refreshTimers() }
+                    let countdown = timers.add()!
+                    timers.editInput(countdown, text: "90")
+                    timers.primaryAction(countdown)
+                    let elapsed = timers.add()!
+                    timers.toggleMode(elapsed)
+                    timers.primaryAction(elapsed, at: Date().addingTimeInterval(-1340))
+                    let target = timers.add()!
+                    timers.setInputKind(target, kind: .targetTime)
+                    timers.editInput(target, text: "18:30")
+                    panel.face.fixedDate = ISO8601DateFormatter().date(from: "2026-11-14T10:15:36+08:00")
+                    panel.appearance = NSAppearance(named: appearance == .dark ? .darkAqua : .aqua)
+                    panel.recordingButton.isHidden = false
+                    panel.face.quickAccessCorner = QuickAccessLayout.corner(for: panel.clockScreenFrame, on: screen)
+                    panel.face.layoutSubtreeIfNeeded()
+                    let view = panel.face
+                    let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+                    panel.appearance?.performAsCurrentDrawingAppearance { view.cacheDisplay(in: view.bounds, to: bitmap) }
+                    let data = bitmap.representation(using: .png, properties: [:])!
+                    let side = above ? "above" : "below"
+                    try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("timers-\(appearance.rawValue)-\(Int(size))-\(side).png"))
+                    panel.hideClock()
+                }
+            }
+        }
+    }
+
     /// Render the real settings controls without opening a window or changing preferences.
     static func renderDocumentationPreviews(to directory: String) throws {
         try renderStylePreviews(to: directory)
         try renderQuickPreviews(to: directory)
+        try renderTimerPreviews(to: directory)
         for enabled in [true, false] {
             var settings = ClockSettings()
             settings.showsMinuteNumerals = enabled

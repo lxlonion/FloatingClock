@@ -6,14 +6,29 @@ final class ClockFaceView: NSView {
     var fixedDate: Date?
     var onDragFinished: (() -> Void)?
     var onContextMenu: ((NSEvent) -> Void)?
+    var onHoverChanged: ((Bool) -> Void)?
+    var dialFrame: CGRect? { didSet { needsDisplay = true } }
+    var dialCard: CGRect { (dialFrame ?? bounds).insetBy(dx: ClockLayout.padding, dy: ClockLayout.padding) }
     var quickAccessCorner: ClockCorner? { didSet { if oldValue != quickAccessCorner { needsDisplay = true } } }
     private var minutePathCache: (minute: String, card: CGRect, size: Double, path: CGPath)?
+    private var hoverTracking: NSTrackingArea?
 
     override var acceptsFirstResponder: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTracking { removeTrackingArea(hoverTracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        hoverTracking = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { onHoverChanged?(true) }
+    override func mouseExited(with event: NSEvent) { onHoverChanged?(false) }
+
     override func resetCursorRects() {
-        if !settings.isLocked { addCursorRect(bounds, cursor: .openHand) }
+        if !settings.isLocked { addCursorRect(dialFrame ?? bounds, cursor: .openHand) }
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -33,7 +48,7 @@ final class ClockFaceView: NSView {
         NSColor.clear.setFill()
         dirtyRect.fill(using: .copy)
 
-        let card = bounds.insetBy(dx: ClockLayout.padding, dy: ClockLayout.padding)
+        let card = dialCard
         let scale = card.width / 224
         let center = CGPoint(x: card.midX, y: card.midY)
         let dark = settings.appearance == .dark ||
@@ -41,7 +56,9 @@ final class ClockFaceView: NSView {
         let face = dark ? NSColor(calibratedWhite: 0.12, alpha: 1) : NSColor(calibratedRed: 0.975, green: 0.967, blue: 0.945, alpha: 1)
         let ink = dark ? NSColor(calibratedWhite: 0.94, alpha: 1) : NSColor(calibratedWhite: 0.17, alpha: 1)
         let accent = dark ? NSColor(calibratedRed: 1, green: 0.53, blue: 0.35, alpha: 1) : NSColor(calibratedRed: 0.79, green: 0.31, blue: 0.18, alpha: 1)
-        let cardPath = NSBezierPath(roundedRect: card, xRadius: 38 * scale, yRadius: 38 * scale)
+        let backgroundCard = bounds.insetBy(dx: ClockLayout.padding, dy: ClockLayout.padding)
+        let radius: CGFloat = bounds.height > (dialFrame ?? bounds).height ? 22 : 38 * scale
+        let cardPath = NSBezierPath(roundedRect: backgroundCard, xRadius: radius, yRadius: radius)
 
         NSGraphicsContext.saveGraphicsState()
         let shadow = NSShadow()

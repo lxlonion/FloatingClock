@@ -7,10 +7,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: ClockPanel!
     private var menuController: MenuController!
     private var advancedSettingsController: AdvancedSettingsWindowController?
+    private var timerCoordinator: TimerCoordinator!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         settings = store.load()
         panel = ClockPanel(settings: settings)
+        timerCoordinator = TimerCoordinator(notifications: TimerNotifications())
+        panel.timerCoordinator = timerCoordinator
+        timerCoordinator.onChange = { [weak self] in self?.panel.refreshTimers() }
+        timerCoordinator.restore()
         menuController = MenuController(settings: settings)
         panel.onPositionChanged = { [weak self] origin in
             guard let self else { return }
@@ -85,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func restoreFloatingWindow() {
+        timerCoordinator?.tick()
         if panel.isVisible { panel.showClock() }
     }
 
@@ -105,6 +111,15 @@ let application = NSApplication.shared
 application.setActivationPolicy(.accessory)
 if CommandLine.arguments.contains("--smoke-test") {
     exit(RuntimeChecks.run())
+}
+if let index = CommandLine.arguments.firstIndex(of: "--render-timer-previews"), CommandLine.arguments.count > index + 1 {
+    do {
+        try RuntimeChecks.renderTimerPreviews(to: CommandLine.arguments[index + 1])
+        exit(0)
+    } catch {
+        fputs("Timer previews failed: \(error)\n", stderr)
+        exit(1)
+    }
 }
 if let index = CommandLine.arguments.firstIndex(of: "--render-documentation-previews"), CommandLine.arguments.count > index + 1 {
     do {
