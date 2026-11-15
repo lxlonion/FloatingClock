@@ -142,8 +142,9 @@ final class TimerCoordinator {
         changed()
     }
 
-    func setInputKind(_ id: UUID, kind: ClockTimerInput) {
+    func setInputKind(_ id: UUID, kind: ClockTimerInput, at now: Date = Date(), calendar: Calendar = .current) {
         guard let index = editableIndex(id) else { return }
+        guard timers[index].inputKind != kind else { return }
         notifications.cancel(id)
         notificationGenerations[id] = nil
         notificationErrors[id] = nil
@@ -152,8 +153,11 @@ final class TimerCoordinator {
         if kind == .targetTime {
             timers[index].mode = .countdown
             let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.calendar = calendar
+            formatter.timeZone = calendar.timeZone
             formatter.dateFormat = "HH:mm"
-            timers[index].input = formatter.string(from: Date().addingTimeInterval(3600))
+            timers[index].input = formatter.string(from: now.addingTimeInterval(60))
         } else { timers[index].input = timers[index].mode == .elapsed ? "0" : "5" }
         errors[id] = nil
         changed()

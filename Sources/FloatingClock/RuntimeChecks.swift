@@ -334,8 +334,7 @@ enum RuntimeChecks {
         check(timers.timers.count == 2 && !timers.timers.contains { $0.id == row.id },
               "delete removes exactly one timer group")
         let countdown = timerPanel.timerTray.rows[0]
-        countdown.timeField.stringValue = "1秒"
-        countdown.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        timers.editInput(countdown.id, text: "1秒")
         scheduler.message = "通知未开启"
         let started = Date()
         timers.primaryAction(countdown.id, at: started)
@@ -394,6 +393,102 @@ enum RuntimeChecks {
                   "deleting row \(deletedIndex + 1) keeps the two remaining row frames separate inside the tray")
             for id in timers.timers.map(\.id) { timers.remove(id) }
         }
+        timerPanel.recordingButton.performClick(nil)
+        let targetRow = timerPanel.timerTray.rows[0]
+        targetRow.kindPopup.selectItem(at: 1)
+        _ = targetRow.kindPopup.sendAction(targetRow.kindPopup.action, to: targetRow.kindPopup.target)
+        check(timers.timers[0].inputKind == .targetTime && targetRow.kindPopup.indexOfSelectedItem == 1 && !targetRow.targetInput.isHidden && targetRow.timeField.isHidden,
+              "switching a focused duration input to target time keeps the selected mode")
+        var allSwitchesSucceeded = true
+        for _ in 0..<3 {
+            targetRow.kindPopup.selectItem(at: 0)
+            _ = targetRow.kindPopup.sendAction(targetRow.kindPopup.action, to: targetRow.kindPopup.target)
+            timerPanel.makeFirstResponder(targetRow.durationInput.minutes.field)
+            targetRow.kindPopup.selectItem(at: 1)
+            _ = targetRow.kindPopup.sendAction(targetRow.kindPopup.action, to: targetRow.kindPopup.target)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            allSwitchesSucceeded = allSwitchesSucceeded && timers.timers[0].inputKind == .targetTime && targetRow.kindPopup.indexOfSelectedItem == 1 && targetRow.targetInput.hours.field.currentEditor() != nil
+        }
+        check(allSwitchesSucceeded, "repeated duration-to-target switches remain stable with an active numeric field")
+        // Exercise the real field editor and play action against a fixed local time.
+        let localNow = Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: 15, hour: 18, minute: 34))!
+        timerPanel.makeFirstResponder(nil)
+        timers.setInputKind(targetRow.id, kind: .duration)
+        timers.setInputKind(targetRow.id, kind: .targetTime, at: localNow)
+        check(timers.timers[0].input == "18:35", "target preset uses the next minute instead of adding an hour")
+        timerPanel.makeFirstResponder(targetRow.targetInput.hours.field)
+        targetRow.targetInput.hours.field.selectText(nil)
+        if let editor = targetRow.targetInput.hours.field.currentEditor() as? NSTextView {
+            editor.insertText("18", replacementRange: editor.selectedRange())
+        }
+        if let editor = targetRow.targetInput.minutes.field.currentEditor() as? NSTextView {
+            editor.insertText("40", replacementRange: editor.selectedRange())
+        }
+        let targetID = targetRow.id
+        targetRow.onPrimary = { timers.primaryAction(targetID, at: localNow) }
+        targetRow.primaryButton.performClick(nil)
+        check(timers.timers[0].input == "18:40" && timers.timers[0].duration == 360 && scheduler.scheduled.last?.deadline == localNow.addingTimeInterval(360),
+              "editing 18:40 then clicking play at 18:34 schedules exactly six minutes")
+        timers.primaryAction(targetID, at: localNow.addingTimeInterval(1))
+        timers.reset(targetID)
+        timerPanel.makeFirstResponder(targetRow.targetInput.hours.field)
+        targetRow.targetInput.hours.field.selectText(nil)
+        for character in "1930" {
+            if let editor = timerPanel.firstResponder as? NSTextView {
+                editor.insertText(String(character), replacementRange: editor.selectedRange())
+            }
+        }
+        check(targetRow.targetInput.hours.value == 19 && targetRow.targetInput.minutes.value == 30 &&
+              targetRow.targetInput.minutes.field.currentEditor() != nil && timers.timers[0].input == "19:30" && timers.timers[0].state == .idle,
+              "typing 1930 moves the caret from hours to selected minutes automatically without mouse input")
+        timerPanel.makeFirstResponder(targetRow.targetInput.hours.field)
+        targetRow.targetInput.hours.field.selectText(nil)
+        if let editor = targetRow.targetInput.hours.field.currentEditor() as? NSTextView {
+            editor.insertText("1930", replacementRange: editor.selectedRange())
+        }
+        check(targetRow.targetInput.hours.value == 19 && targetRow.targetInput.minutes.value == 30 && timers.timers[0].input == "19:30",
+              "pasting four clock digits also splits them into hour and minute fields")
+        let hourStepper = targetRow.targetInput.hours.stepper
+        let minuteStepper = targetRow.targetInput.minutes.stepper
+        for value in [20, 19] {
+            hourStepper.integerValue = value
+            _ = hourStepper.sendAction(hourStepper.action, to: hourStepper.target)
+        }
+        for value in [31, 30] {
+            minuteStepper.integerValue = value
+            _ = minuteStepper.sendAction(minuteStepper.action, to: minuteStepper.target)
+        }
+        check(timers.timers[0].input == "19:30" && hourStepper.maxValue == 23 && minuteStepper.maxValue == 59,
+              "target hour and minute steppers edit a 24-hour time within valid limits")
+        targetRow.targetInput.hours.update(value: 20)
+        targetRow.targetInput.commit()
+        timers.editInput(targetID, text: "18:40")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        check(targetRow.targetInput.hours.value == 18 && targetRow.targetInput.minutes.value == 40 && timers.timers[0].input == "18:40",
+              "a delayed input refresh cannot overwrite a newer target time")
+        timers.editInput(targetID, text: "2030-11-15 19:30:15")
+        minuteStepper.integerValue = 31
+        _ = minuteStepper.sendAction(minuteStepper.action, to: minuteStepper.target)
+        check(timers.timers[0].input == "2030-11-15 19:31:15", "editing target digits preserves a legacy explicit date and seconds")
+        let lateNight = Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: 15, hour: 23, minute: 59))!
+        timers.setInputKind(targetID, kind: .duration)
+        timers.setInputKind(targetID, kind: .targetTime, at: lateNight)
+        targetRow.targetInput.hours.update(value: 0)
+        targetRow.targetInput.minutes.update(value: 5)
+        targetRow.onPrimary = { timers.primaryAction(targetID, at: lateNight) }
+        targetRow.primaryButton.performClick(nil)
+        check(timers.timers[0].input == "00:05" && timers.timers[0].duration == 360,
+              "numeric midnight target rolls to the next day and counts exactly six minutes")
+        timers.primaryAction(targetID, at: lateNight.addingTimeInterval(1))
+        timers.reset(targetID)
+        timers.editInput(targetID, text: "18:")
+        timers.primaryAction(targetID, at: localNow)
+        let modePickerIsAvailable = !targetRow.kindPopup.isHidden && timers.errors[targetID] != nil
+        targetRow.kindPopup.selectItem(at: 0)
+        _ = targetRow.kindPopup.sendAction(targetRow.kindPopup.action, to: targetRow.kindPopup.target)
+        check(modePickerIsAvailable && timers.timers[0].inputKind == .duration && timers.errors[targetID] == nil,
+              "invalid target text leaves the mode picker available and can switch back to duration")
+        timers.remove(targetRow.id)
         let result: [String: Any] = ["passed": failures.isEmpty, "count": checks.count, "checks": checks, "failures": failures]
         let data = try! JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
         print(String(data: data, encoding: .utf8)!)
@@ -445,10 +540,18 @@ enum RuntimeChecks {
                     let data = bitmap.representation(using: .png, properties: [:])!
                     let side = above ? "above" : "below"
                     try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("timers-\(appearance.rawValue)-\(Int(size))-\(side).png"))
+                    timers.setInputKind(editable, kind: .targetTime)
+                    timers.editInput(editable, text: "19:30")
+                    panel.recordingButton.isHidden = false
+                    panel.face.layoutSubtreeIfNeeded()
+                    let targetBitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+                    panel.appearance?.performAsCurrentDrawingAppearance { view.cacheDisplay(in: view.bounds, to: targetBitmap) }
+                    try targetBitmap.representation(using: .png, properties: [:])!.write(
+                        to: URL(fileURLWithPath: directory).appendingPathComponent("timers-target-\(appearance.rawValue)-\(Int(size))-\(side).png"))
                     if size == 224 {
                         panel.showClock()
                         panel.makeKey()
-                        panel.makeFirstResponder(panel.timerTray.rows[2].durationInput.minutes.field)
+                        panel.makeFirstResponder(panel.timerTray.rows[2].targetInput.minutes.field)
                         panel.timerTray.rows[0].deleteButton.performClick(nil)
                         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
                         panel.recordingButton.isHidden = false

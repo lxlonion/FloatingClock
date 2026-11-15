@@ -145,6 +145,29 @@ final class ClockTimerTests: XCTestCase {
         }
     }
 
+    func testSameDayTargetAt1840From1834IsSixMinutes() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600)!
+        let now = ISO8601DateFormatter().date(from: "2026-11-15T18:34:00+08:00")!
+        for input in ["18:40", "18:40:00", "2026-11-15 18:40"] {
+            var timer = ClockTimer()
+            timer.inputKind = .targetTime
+            timer.input = input
+            try timer.start(at: now, calendar: calendar)
+            XCTAssertEqual(timer.duration, 360, input)
+            XCTAssertEqual(timer.seconds(at: now), 360, input)
+            XCTAssertEqual(timer.deadline, now.addingTimeInterval(360), input)
+        }
+    }
+
+    func testSameDayTargetKeepsSecondsAndOnlyPassedTimesRollToTomorrow() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600)!
+        let now = ISO8601DateFormatter().date(from: "2026-11-15T18:34:45+08:00")!
+        XCTAssertEqual(try TimerInputParser.targetDate("18:40", now: now, calendar: calendar).timeIntervalSince(now), 315)
+        XCTAssertEqual(try TimerInputParser.targetDate("18:30", now: now, calendar: calendar).timeIntervalSince(now), 86_115)
+    }
+
     func testTargetTimerUsesDeadlineAndSurvivesLongSleep() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!

@@ -1,11 +1,12 @@
 import AppKit
 import ClockCore
 
-final class TimerRowView: NSView, NSTextFieldDelegate {
+final class TimerRowView: NSView {
     let id: UUID
     let signButton = NSButton(title: "+", target: nil, action: nil)
     let timeField = NSTextField(string: "")
-    let durationInput = TimerDurationInput()
+    let durationInput = TimerTimeInput(kind: .duration)
+    let targetInput = TimerTimeInput(kind: .targetTime)
     let primaryButton = NSButton()
     let deleteButton = NSButton()
     let kindPopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -17,6 +18,9 @@ final class TimerRowView: NSView, NSTextFieldDelegate {
     var onReset: (() -> Void)?
     var onInput: ((String) -> Void)?
     var onKind: ((ClockTimerInput) -> Void)?
+    private var currentInputKind: ClockTimerInput = .duration
+    private var isIdle = true
+    private var isChangingKind = false
 
     init(timer: ClockTimer) {
         id = timer.id
@@ -32,7 +36,6 @@ final class TimerRowView: NSView, NSTextFieldDelegate {
         resetButton.font = .systemFont(ofSize: 11)
         resetButton.toolTip = "停止后重新设置时间"
         for button in [signButton, primaryButton, deleteButton, resetButton] { button.isBordered = false }
-        timeField.delegate = self
         timeField.font = .monospacedDigitSystemFont(ofSize: 16, weight: .medium)
         timeField.isBezeled = false
         timeField.drawsBackground = false
@@ -43,8 +46,16 @@ final class TimerRowView: NSView, NSTextFieldDelegate {
         timeField.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
         timeField.setAccessibilityLabel("计时时间")
         timeField.cell?.sendsActionOnEndEditing = false
-        durationInput.onChange = { [weak self] in self?.onInput?($0) }
+        durationInput.onChange = { [weak self] text in
+            guard let self, self.isIdle, self.currentInputKind == .duration, !self.isChangingKind else { return }
+            self.onInput?(text)
+        }
         durationInput.onSubmit = { [weak self] in self?.primary() }
+        targetInput.onChange = { [weak self] text in
+            guard let self, self.isIdle, self.currentInputKind == .targetTime, !self.isChangingKind else { return }
+            self.onInput?(text)
+        }
+        targetInput.onSubmit = { [weak self] in self?.primary() }
         kindPopup.addItems(withTitles: ["时长", "到点时间"])
         kindPopup.controlSize = .small
         kindPopup.font = .systemFont(ofSize: 11)
@@ -52,7 +63,7 @@ final class TimerRowView: NSView, NSTextFieldDelegate {
         kindPopup.setAccessibilityLabel("计时输入方式")
         statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.lineBreakMode = .byTruncatingTail
-        let line = NSStackView(views: [signButton, durationInput, timeField, primaryButton, deleteButton])
+        let line = NSStackView(views: [signButton, durationInput, targetInput, timeField, primaryButton, deleteButton])
         line.orientation = .horizontal; line.alignment = .centerY; line.spacing = 5; line.distribution = .fill
         let detail = NSStackView(views: [kindPopup, statusLabel, NSView(), resetButton])
         detail.orientation = .horizontal; detail.alignment = .centerY; detail.spacing = 4
@@ -78,6 +89,8 @@ final class TimerRowView: NSView, NSTextFieldDelegate {
 
     func refresh(timer: ClockTimer, settings: ClockSettings, error: String?, now: Date = Date()) {
         let editing = timer.state == .idle
+        isIdle = editing
+        currentInputKind = timer.inputKind
         let editingDuration = editing && timer.inputKind == .duration
         let dark = settings.appearance == .dark || (settings.appearance == .system && effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
         let ink = dark ? NSColor(calibratedWhite: 0.94, alpha: 1) : NSColor(calibratedWhite: 0.17, alpha: 1)
@@ -87,28 +100,30 @@ final class TimerRowView: NSView, NSTextFieldDelegate {
         layer?.borderWidth = 0.5
         layer?.borderColor = ink.withAlphaComponent(0.06).cgColor
         durationInput.isHidden = !editingDuration
-        timeField.isHidden = editingDuration
+        targetInput.isHidden = !editing || timer.inputKind != .targetTime
+        timeField.isHidden = editing
         durationInput.apply(ink: ink, dark: dark)
+        targetInput.apply(ink: ink, dark: dark)
         if editingDuration { durationInput.update(input: timer.input) }
+        if editing && timer.inputKind == .targetTime { targetInput.update(input: timer.input) }
         signButton.title = timer.countsDown ? "+" : "−"
         signButton.contentTintColor = timer.countsDown || timer.isOvertime ? .systemRed : ink
         signButton.isEnabled = timer.state != .running
         signButton.toolTip = "点击切换：＋ 倒计时，− 累计计时"
         signButton.setAccessibilityLabel(timer.countsDown ? "倒计时；点击切换为累计计时" : "累计计时；点击切换为倒计时")
         let text = editing ? timer.input : settings.timerDisplayFormat.string(seconds: timer.seconds(at: now), countingDown: timer.countsDown)
-        if timeField.stringValue != text { timeField.stringValue = text }
-        timeField.isEditable = editing && !editingDuration
-        timeField.isSelectable = editing && !editingDuration
+        if timeField.currentEditor() == nil && timeField.stringValue != text { timeField.stringValue = text }
+        timeField.isEditable = false
+        timeField.isSelectable = false
         timeField.textColor = timer.isOvertime || timer.state == .completed ? .systemRed : ink
         timeField.font = .monospacedDigitSystemFont(ofSize: settings.faceSize < 224 ? 14 : 16, weight: .medium)
-        timeField.placeholderString = timer.inputKind == .duration ? "分钟 / 1小时30min" : "18:30"
-        timeField.toolTip = timer.inputKind == .duration ? "数字按分钟；也可输入 90:00、1小时30min、30秒。− 从 0 开始累计。" : "输入 HH:mm、HH:mm:ss 或 yyyy-MM-dd HH:mm；只填时刻时取下一次该时刻。"
+        timeField.toolTip = "当前计时读数"
         let symbol = timer.state == .running ? "stop.fill" : "play.fill"
         primaryButton.image = NSImage(systemSymbolName: symbol, accessibilityDescription: timer.state == .running ? "停止计时" : "开始计时")
         primaryButton.contentTintColor = .systemRed
         primaryButton.toolTip = timer.state == .running ? "停止并保留当前时间" : (timer.state == .paused ? "继续计时" : "开始计时")
         primaryButton.setAccessibilityLabel(primaryButton.toolTip)
-        kindPopup.isHidden = !editing || error != nil
+        kindPopup.isHidden = !editing
         kindPopup.selectItem(at: timer.inputKind == .duration ? 0 : 1)
         kindPopup.isEnabled = timer.mode == .countdown
         resetButton.isHidden = editing || timer.state == .running
@@ -121,6 +136,10 @@ final class TimerRowView: NSView, NSTextFieldDelegate {
             case .idle:
                 if editingDuration && durationInput.remainingSeconds > 0 {
                     statusLabel.stringValue = "另含 \(durationInput.remainingSeconds)秒"
+                } else if timer.inputKind == .targetTime,
+                          let target = try? TimerInputParser.targetDate(timer.input, now: now) {
+                    let remaining = TimerDisplayFormat.totalMinutes.string(seconds: target.timeIntervalSince(now), countingDown: true)
+                    statusLabel.stringValue = "剩\(remaining)"
                 } else { statusLabel.stringValue = timer.mode == .elapsed ? "从已用时开始" : "设置后点 ▶" }
             case .running: statusLabel.stringValue = timer.isOvertime ? "时间到了 · 正在累计超时" : (timer.mode == .elapsed ? "正在累计" : "倒计时中 · 到时通知")
             case .paused: statusLabel.stringValue = timer.isOvertime ? "超时已停止 · 可继续" : "已停止 · 可继续"
@@ -130,20 +149,26 @@ final class TimerRowView: NSView, NSTextFieldDelegate {
         statusLabel.toolTip = error ?? statusLabel.stringValue
     }
 
-    func controlTextDidChange(_ obj: Notification) { onInput?(timeField.stringValue) }
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        guard commandSelector == #selector(NSResponder.insertNewline(_:)) else { return false }
-        primary()
-        return true
-    }
     @objc private func toggleSign() { window?.makeFirstResponder(nil); onSign?() }
     @objc private func primary() {
         guard window?.makeFirstResponder(nil) != false else { return }
+        if isIdle && currentInputKind == .targetTime { targetInput.commit() }
         onPrimary?()
     }
     @objc private func deleteTimer() { window?.makeFirstResponder(nil); onDelete?() }
     @objc private func resetTimer() { onReset?() }
-    @objc private func kindChanged() { window?.makeFirstResponder(nil); onKind?(kindPopup.indexOfSelectedItem == 0 ? .duration : .targetTime) }
+    @objc private func kindChanged() {
+        // Ending editing can synchronously refresh the popup with the old mode.
+        let selected: ClockTimerInput = kindPopup.indexOfSelectedItem == 0 ? .duration : .targetTime
+        isChangingKind = true
+        if window?.makeFirstResponder(nil) == false { window?.endEditing(for: nil) }
+        onKind?(selected)
+        isChangingKind = false
+        if isIdle && currentInputKind == selected {
+            let field = selected == .targetTime ? targetInput.hours.field : durationInput.minutes.field
+            if window?.makeFirstResponder(field) == true { field.selectText(nil) }
+        }
+    }
 }
 
 final class TimerTrayView: NSView {

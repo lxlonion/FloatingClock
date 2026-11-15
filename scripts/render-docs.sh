@@ -20,5 +20,5 @@ cp "$PREVIEW_DIR/quick-light-bottomLeft.png" "$IMAGE_DIR/quick-access-bottom-lef
 cp "$PREVIEW_DIR/advanced-settings.png" "$IMAGE_DIR/advanced-settings.png"
 cp "$PREVIEW_DIR/advanced-settings-disabled.png" "$IMAGE_DIR/advanced-settings-disabled.png"
 cp "$PREVIEW_DIR/timers-light-224-below.png" "$IMAGE_DIR/timers-light.png"
-cp "$PREVIEW_DIR/timers-dark-224-above.png" "$IMAGE_DIR/timers-dark.png"
+cp "$PREVIEW_DIR/timers-target-dark-224-above.png" "$IMAGE_DIR/timers-dark.png"
 printf 'Rendered documentation images: %s\n' "$IMAGE_DIR"

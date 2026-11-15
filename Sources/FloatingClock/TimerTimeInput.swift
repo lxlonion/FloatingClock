@@ -8,10 +8,11 @@ final class TimerNumberInput: NSView, NSTextFieldDelegate {
     private let unitLabel: NSTextField
     private let maximum: Int
     var onChange: (() -> Void)?
+    var onTextChange: ((String) -> Void)?
     var onSubmit: (() -> Void)?
-    var value: Int { field.integerValue }
+    var value: Int { Int(field.currentEditor()?.string ?? "") ?? field.integerValue }
 
-    init(unit: String, maximum: Int) {
+    init(unit: String, maximum: Int, minimumDigits: Int = 1) {
         self.maximum = maximum
         unitLabel = NSTextField(labelWithString: unit)
         super.init(frame: .zero)
@@ -21,6 +22,7 @@ final class TimerNumberInput: NSView, NSTextFieldDelegate {
         let formatter = NumberFormatter()
         formatter.numberStyle = .none
         formatter.allowsFloats = false
+        formatter.minimumIntegerDigits = minimumDigits
         formatter.minimum = 0
         formatter.maximum = NSNumber(value: maximum)
         field.formatter = formatter
@@ -77,9 +79,13 @@ final class TimerNumberInput: NSView, NSTextFieldDelegate {
     }
 
     func controlTextDidEndEditing(_ obj: Notification) {
-        field.integerValue = min(maximum, max(0, field.integerValue))
+        field.integerValue = min(maximum, max(0, value))
         stepper.integerValue = field.integerValue
         onChange?()
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        onTextChange?(field.currentEditor()?.string ?? field.stringValue)
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -97,14 +103,21 @@ final class TimerNumberInput: NSView, NSTextFieldDelegate {
     }
 }
 
-final class TimerDurationInput: NSStackView {
-    let hours = TimerNumberInput(unit: "小时", maximum: 16_666)
-    let minutes = TimerNumberInput(unit: "分钟", maximum: 999_999)
+final class TimerTimeInput: NSStackView {
+    let hours: TimerNumberInput
+    let minutes: TimerNumberInput
+    let kind: ClockTimerInput
     private(set) var remainingSeconds: TimeInterval = 0
+    private var targetDatePrefix = ""
+    private var targetSecondsSuffix = ""
+    private var updateRevision = 0
     var onChange: ((String) -> Void)?
     var onSubmit: (() -> Void)?
 
-    init() {
+    init(kind: ClockTimerInput) {
+        self.kind = kind
+        hours = TimerNumberInput(unit: "小时", maximum: kind == .duration ? 16_666 : 23, minimumDigits: kind == .duration ? 1 : 2)
+        minutes = TimerNumberInput(unit: "分钟", maximum: kind == .duration ? 999_999 : 59, minimumDigits: kind == .duration ? 1 : 2)
         super.init(frame: .zero)
         orientation = .horizontal
         distribution = .fillEqually
@@ -115,14 +128,34 @@ final class TimerDurationInput: NSStackView {
             input.onChange = { [weak self] in self?.commit() }
             input.onSubmit = { [weak self] in self?.onSubmit?() }
         }
-        setAccessibilityLabel("计时时长")
-        toolTip = "分别输入小时与分钟，或点击上下箭头调节；分钟可输入 90，自动换算为 1 小时 30 分钟。"
+        setAccessibilityLabel(kind == .duration ? "计时时长" : "到点时间")
+        toolTip = kind == .duration ? "分别输入小时与分钟，或点击上下箭头调节；分钟可输入 90，自动换算为 1 小时 30 分钟。" :
+            "24 小时制：小时 00–23，分钟 00–59。小时输入两位后自动跳到分钟；连续输入 1930 即为 19 点 30 分。已过的时刻取次日。"
+        hours.field.nextKeyView = minutes.field
+        if kind == .targetTime {
+            hours.onTextChange = { [weak self] in self?.hourTextChanged($0) }
+            minutes.onTextChange = { [weak self] text in
+                if let value = Int(text), (0...59).contains(value) { self?.commit() }
+            }
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func update(input: String) {
+        updateRevision += 1
         guard hours.field.currentEditor() == nil, minutes.field.currentEditor() == nil else { return }
+        if kind == .targetTime {
+            let parts = input.split(separator: " ")
+            let time = (parts.last ?? "").split(separator: ":", omittingEmptySubsequences: false)
+            guard (time.count == 2 || time.count == 3), let hour = Int(time[0]), let minute = Int(time[1]),
+                  (0...23).contains(hour), (0...59).contains(minute) else { return }
+            targetDatePrefix = parts.count == 2 ? String(parts[0]) + " " : ""
+            targetSecondsSuffix = time.count == 3 ? ":" + String(time[2]) : ""
+            hours.update(value: hour)
+            minutes.update(value: minute)
+            return
+        }
         let unsigned = input.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "+-−"))
         guard let seconds = try? TimerInputParser.duration(unsigned) else { return }
         let whole = Int(seconds)
@@ -136,11 +169,41 @@ final class TimerDurationInput: NSStackView {
         minutes.apply(ink: ink, dark: dark)
     }
 
-    private func commit() {
-        let total = min(TimerInputParser.maximumDuration, Double(hours.value) * 3600 + Double(minutes.value) * 60 + remainingSeconds)
-        let input = "\(total)秒"
+    func commit() {
+        let input: String
+        if kind == .targetTime {
+            guard (0...23).contains(hours.value), (0...59).contains(minutes.value) else { return }
+            input = targetDatePrefix + String(format: "%02d:%02d", hours.value, minutes.value) + targetSecondsSuffix
+        } else {
+            let total = min(TimerInputParser.maximumDuration, Double(hours.value) * 3600 + Double(minutes.value) * 60 + remainingSeconds)
+            input = "\(total)秒"
+        }
         onChange?(input)
         // End-editing callbacks can arrive before AppKit detaches the field editor.
-        DispatchQueue.main.async { [weak self] in self?.update(input: input) }
+        let revision = updateRevision
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.updateRevision == revision else { return }
+            self.update(input: input)
+        }
+    }
+
+    private func hourTextChanged(_ text: String) {
+        // Also accept all four digits in one paste/input event.
+        if text.count == 4, text.allSatisfy({ $0.isASCII && $0.isNumber }),
+           let hour = Int(text.prefix(2)), let minute = Int(text.suffix(2)),
+           (0...23).contains(hour), (0...59).contains(minute) {
+            hours.field.currentEditor()?.string = String(text.prefix(2))
+            minutes.update(value: minute)
+            commit()
+            focusMinutes()
+        } else if let hour = Int(text), (0...23).contains(hour) {
+            commit()
+            if text.count == 2 { focusMinutes() }
+        }
+    }
+
+    private func focusMinutes() {
+        guard window?.makeFirstResponder(minutes.field) == true else { return }
+        minutes.field.selectText(nil)
     }
 }
