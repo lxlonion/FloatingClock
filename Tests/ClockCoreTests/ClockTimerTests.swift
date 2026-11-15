@@ -233,4 +233,18 @@ final class ClockTimerTests: XCTestCase {
             XCTAssertTrue(layout.frame.contains(layout.dialFrame.offsetBy(dx: layout.frame.minX, dy: layout.frame.minY)))
         }
     }
+
+    func testSingleTimerFooterStaysBelowClockAndTrayInBothDirections() {
+        let screen = CGRect(x: -1920, y: 1080, width: 1920, height: 1080)
+        for (y, above) in [(1150.0, true), (1850.0, false)] {
+            let clock = CGRect(x: -1800, y: y, width: 248, height: 248)
+            let layout = TimerAttachmentLayout(clock: clock, trayHeight: 98, screen: screen, footerHeight: 28)
+            XCTAssertEqual(layout.isAbove, above)
+            XCTAssertTrue(screen.contains(layout.frame))
+            XCTAssertEqual(layout.dialFrame.offsetBy(dx: layout.frame.minX, dy: layout.frame.minY), clock)
+            XCTAssertGreaterThanOrEqual(layout.dialFrame.minY, 28)
+            XCTAssertGreaterThanOrEqual(layout.trayFrame.minY, 28 + ClockLayout.padding)
+            XCTAssertEqual(layout.frame.height, clock.height + 98 + 28)
+        }
+    }
 }

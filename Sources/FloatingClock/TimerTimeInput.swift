@@ -12,7 +12,7 @@ final class TimerNumberInput: NSView, NSTextFieldDelegate {
     var onSubmit: (() -> Void)?
     var value: Int { Int(field.currentEditor()?.string ?? "") ?? field.integerValue }
 
-    init(unit: String, maximum: Int, minimumDigits: Int = 1) {
+    init(unit: String, maximum: Int, minimumDigits: Int = 1, accessibilityLabel: String? = nil) {
         self.maximum = maximum
         unitLabel = NSTextField(labelWithString: unit)
         super.init(frame: .zero)
@@ -33,7 +33,7 @@ final class TimerNumberInput: NSView, NSTextFieldDelegate {
         field.usesSingleLineMode = true
         field.cell?.sendsActionOnEndEditing = false
         field.delegate = self
-        field.setAccessibilityLabel(unit)
+        field.setAccessibilityLabel(accessibilityLabel ?? unit)
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         unitLabel.font = .systemFont(ofSize: 9, weight: .medium)
         stepper.minValue = 0
@@ -44,7 +44,7 @@ final class TimerNumberInput: NSView, NSTextFieldDelegate {
         stepper.controlSize = .small
         stepper.target = self
         stepper.action = #selector(step)
-        stepper.setAccessibilityLabel("调整\(unit)")
+        stepper.setAccessibilityLabel("调整\(accessibilityLabel ?? unit)")
         for view in [field, unitLabel, stepper] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
@@ -120,8 +120,8 @@ final class TimerTimeInput: NSStackView {
 
     init(kind: ClockTimerInput) {
         self.kind = kind
-        hours = TimerNumberInput(unit: "小时", maximum: kind == .duration ? 16_666 : 23, minimumDigits: kind == .duration ? 1 : 2)
-        minutes = TimerNumberInput(unit: "分钟", maximum: kind == .duration ? 999_999 : 59, minimumDigits: kind == .duration ? 1 : 2)
+        hours = TimerNumberInput(unit: "h", maximum: kind == .duration ? 16_666 : 23, minimumDigits: kind == .duration ? 1 : 2, accessibilityLabel: "小时")
+        minutes = TimerNumberInput(unit: "mim", maximum: kind == .duration ? 999_999 : 59, minimumDigits: kind == .duration ? 1 : 2, accessibilityLabel: "分钟")
         super.init(frame: .zero)
         orientation = .horizontal
         distribution = .fillEqually

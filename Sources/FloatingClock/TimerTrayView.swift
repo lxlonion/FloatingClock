@@ -9,7 +9,7 @@ final class TimerRowView: NSView {
     let targetInput = TimerTimeInput(kind: .targetTime)
     let primaryButton = NSButton()
     let deleteButton = NSButton()
-    let kindPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    let kindButton = NSButton()
     let statusLabel = NSTextField(labelWithString: "")
     let resetButton = NSButton(title: "重设", target: nil, action: nil)
     var onSign: (() -> Void)?
@@ -42,7 +42,7 @@ final class TimerRowView: NSView {
         resetButton.target = self; resetButton.action = #selector(resetTimer)
         resetButton.font = .systemFont(ofSize: 11)
         resetButton.toolTip = "停止后重新设置时间"
-        for button in [signButton, primaryButton, deleteButton, resetButton] { button.isBordered = false }
+        for button in [signButton, kindButton, primaryButton, deleteButton, resetButton] { button.isBordered = false }
         timeField.font = .monospacedDigitSystemFont(ofSize: 16, weight: .medium)
         timeField.isBezeled = false
         timeField.drawsBackground = false
@@ -63,16 +63,14 @@ final class TimerRowView: NSView {
             self.onInput?(text)
         }
         targetInput.onSubmit = { [weak self] in self?.primary() }
-        kindPopup.addItems(withTitles: ["时长", "到点时间"])
-        kindPopup.controlSize = .small
-        kindPopup.font = .systemFont(ofSize: 11)
-        kindPopup.target = self; kindPopup.action = #selector(kindChanged)
-        kindPopup.setAccessibilityLabel("计时输入方式")
+        kindButton.target = self; kindButton.action = #selector(kindChanged)
+        kindButton.imageScaling = .scaleProportionallyDown
+        kindButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
         statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.lineBreakMode = .byTruncatingTail
         let line = NSStackView(views: [signButton, durationInput, targetInput, timeField, primaryButton, deleteButton])
         line.orientation = .horizontal; line.alignment = .centerY; line.spacing = 5; line.distribution = .fill
-        let detail = NSStackView(views: [kindPopup, statusLabel, NSView(), resetButton])
+        let detail = NSStackView(views: [kindButton, statusLabel, NSView(), resetButton])
         detail.orientation = .horizontal; detail.alignment = .centerY; detail.spacing = 4
         for view in [line, detail] { view.translatesAutoresizingMaskIntoConstraints = false; addSubview(view) }
         NSLayoutConstraint.activate([
@@ -87,7 +85,8 @@ final class TimerRowView: NSView {
             signButton.widthAnchor.constraint(equalToConstant: 20),
             primaryButton.widthAnchor.constraint(equalToConstant: 24),
             deleteButton.widthAnchor.constraint(equalToConstant: 18),
-            kindPopup.widthAnchor.constraint(equalToConstant: 90),
+            kindButton.widthAnchor.constraint(equalToConstant: 22),
+            kindButton.heightAnchor.constraint(equalToConstant: 22),
             resetButton.widthAnchor.constraint(equalToConstant: 32)
         ])
     }
@@ -122,9 +121,13 @@ final class TimerRowView: NSView {
         primaryButton.image = NSImage(systemSymbolName: symbol, accessibilityDescription: timer.state == .running ? "停止计时" : "开始计时")
         primaryButton.toolTip = timer.state == .running ? "停止并保留当前时间" : (timer.state == .paused ? "继续计时" : "开始计时")
         primaryButton.setAccessibilityLabel(primaryButton.toolTip)
-        kindPopup.isHidden = !editing
-        kindPopup.selectItem(at: timer.inputKind == .duration ? 0 : 1)
-        kindPopup.isEnabled = timer.mode == .countdown
+        kindButton.isHidden = !editing
+        kindButton.isEnabled = timer.mode == .countdown
+        let durationMode = timer.inputKind == .duration
+        kindButton.image = NSImage(systemSymbolName: durationMode ? "stopwatch" : "arrow.right",
+                                  accessibilityDescription: durationMode ? "时长" : "到点时间")
+        kindButton.toolTip = durationMode ? "时长 · 点击切换为到点时间" : "到点时间 · 点击切换为时长"
+        kindButton.setAccessibilityLabel(kindButton.toolTip)
         resetButton.isHidden = editing || timer.state == .running
         if let error { statusLabel.stringValue = error }
         else {
@@ -136,13 +139,14 @@ final class TimerRowView: NSView {
                           let target = try? TimerInputParser.targetDate(timer.input, now: now) {
                     let remaining = TimerDisplayFormat.totalMinutes.string(seconds: target.timeIntervalSince(now), countingDown: true)
                     statusLabel.stringValue = "剩\(remaining)"
-                } else { statusLabel.stringValue = timer.mode == .elapsed ? "从已用时开始" : "设置后点 ▶" }
+                } else { statusLabel.stringValue = "" }
             case .running: statusLabel.stringValue = timer.isOvertime ? "时间到了 · 正在累计超时" : (timer.mode == .elapsed ? "正在累计" : "倒计时中 · 到时通知")
             case .paused: statusLabel.stringValue = timer.isOvertime ? "超时已停止 · 可继续" : "已停止 · 可继续"
             case .completed: statusLabel.stringValue = "时间到了"
             }
         }
         statusLabel.toolTip = error ?? statusLabel.stringValue
+        statusLabel.isHidden = statusLabel.stringValue.isEmpty
         applyAppearance()
     }
 
@@ -164,6 +168,7 @@ final class TimerRowView: NSView {
         signButton.contentTintColor = accentSign ? .systemRed : ink
         timeField.textColor = accentReadout ? .systemRed : ink
         primaryButton.contentTintColor = .systemRed
+        kindButton.contentTintColor = ink.withAlphaComponent(0.65)
         resetButton.contentTintColor = ink.withAlphaComponent(0.65)
         deleteButton.contentTintColor = ink.withAlphaComponent(0.5)
         statusLabel.textColor = hasError ? .systemRed : ink.withAlphaComponent(0.55)
@@ -179,8 +184,8 @@ final class TimerRowView: NSView {
     @objc private func deleteTimer() { window?.makeFirstResponder(nil); onDelete?() }
     @objc private func resetTimer() { onReset?() }
     @objc private func kindChanged() {
-        // Ending editing can synchronously refresh the popup with the old mode.
-        let selected: ClockTimerInput = kindPopup.indexOfSelectedItem == 0 ? .duration : .targetTime
+        // Capture the new mode before ending editing can refresh the row.
+        let selected: ClockTimerInput = currentInputKind == .duration ? .targetTime : .duration
         isChangingKind = true
         if window?.makeFirstResponder(nil) == false { window?.endEditing(for: nil) }
         onKind?(selected)
@@ -193,22 +198,20 @@ final class TimerRowView: NSView {
 }
 
 final class TimerTrayView: NSView {
-    private let heading = NSTextField(labelWithString: "")
     private let notice = NSTextField(labelWithString: "")
     private(set) var rows: [TimerRowView] = []
     var coordinator: TimerCoordinator?
 
     static func height(count: Int, hasNotice: Bool) -> CGFloat {
-        count == 0 ? 0 : 32 + CGFloat(count) * 90 + (hasNotice ? 32 : 0)
+        count == 0 ? 0 : 8 + CGFloat(count) * 90 + (hasNotice ? 32 : 0)
     }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        heading.font = .systemFont(ofSize: 11, weight: .medium)
         notice.font = .systemFont(ofSize: 10)
         notice.textColor = .systemOrange
         notice.lineBreakMode = .byTruncatingTail
-        addSubview(heading); addSubview(notice)
+        addSubview(notice)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -239,8 +242,6 @@ final class TimerTrayView: NSView {
                 row.removeFromSuperview()
             }
         }
-        heading.stringValue = "计时  \(rows.count) / 3     ＋ 倒计时  ·  − 累计"
-        heading.textColor = .secondaryLabelColor
         notice.stringValue = coordinator.notificationMessage == nil ? "" : "通知未就绪 · 请检查系统通知设置"
         notice.toolTip = coordinator.notificationMessage
         notice.isHidden = coordinator.notificationMessage == nil
@@ -253,9 +254,8 @@ final class TimerTrayView: NSView {
 
     override func layout() {
         super.layout()
-        heading.frame = CGRect(x: 10, y: bounds.height - 25, width: bounds.width - 20, height: 18)
         for (index, row) in rows.enumerated() {
-            row.frame = CGRect(x: 4, y: bounds.height - 32 - CGFloat(index + 1) * 90 + 6, width: bounds.width - 8, height: 84)
+            row.frame = CGRect(x: 4, y: bounds.height - 8 - CGFloat(index + 1) * 90 + 6, width: bounds.width - 8, height: 84)
         }
         notice.frame = CGRect(x: 10, y: 8, width: bounds.width - 20, height: 18)
     }

@@ -275,7 +275,12 @@ enum RuntimeChecks {
         timerPanel.recordingButton.performClick(nil)
         check(timers.timers.count == 1 && timerPanel.timerTray.rows.count == 1 && timerPanel.canBecomeKey,
               "red entry adds an editable timer and allows keyboard input")
+        check(!timerPanel.timerHint.isHidden && timerPanel.timerHint.frame.maxY < timerPanel.timerTray.frame.minY &&
+              timerPanel.timerHint.frame.maxY < (timerPanel.face.dialFrame?.minY ?? 0) + ClockLayout.padding,
+              "a single timer shows its sign hint at the bottom of the entire window")
         timerPanel.recordingButton.performClick(nil)
+        check(timers.timers.count == 2 && timerPanel.timerHint.isHidden,
+              "adding a second timer removes the bottom sign hint")
         timerPanel.recordingButton.performClick(nil)
         timerPanel.recordingButton.performClick(nil)
         check(timers.timers.count == 3 && timerPanel.timerTray.rows.count == 3,
@@ -356,6 +361,8 @@ enum RuntimeChecks {
         check(timers.timers[0].state == .running && timers.timers[0].seconds(at: started.addingTimeInterval(45)) == 25 && scheduler.scheduled.count == afterCompletion,
               "resuming overtime continues the negative count without another notification")
         countdown.deleteButton.performClick(nil)
+        check(timers.timers.count == 1 && !timerPanel.timerHint.isHidden,
+              "deleting back to one timer restores the bottom hint without leaving old views")
         timerPanel.timerTray.rows[0].deleteButton.performClick(nil)
         let side = ClockSettings().faceSize + ClockLayout.padding * 2
         check(timers.timers.isEmpty && timerPanel.frame.size == CGSize(width: side, height: side) && !timerPanel.canBecomeKey,
@@ -395,19 +402,16 @@ enum RuntimeChecks {
         }
         timerPanel.recordingButton.performClick(nil)
         let targetRow = timerPanel.timerTray.rows[0]
-        targetRow.kindPopup.selectItem(at: 1)
-        _ = targetRow.kindPopup.sendAction(targetRow.kindPopup.action, to: targetRow.kindPopup.target)
-        check(timers.timers[0].inputKind == .targetTime && targetRow.kindPopup.indexOfSelectedItem == 1 && !targetRow.targetInput.isHidden && targetRow.timeField.isHidden,
+        targetRow.kindButton.performClick(nil)
+        check(timers.timers[0].inputKind == .targetTime && targetRow.kindButton.image != nil && !targetRow.targetInput.isHidden && targetRow.timeField.isHidden,
               "switching a focused duration input to target time keeps the selected mode")
         var allSwitchesSucceeded = true
         for _ in 0..<3 {
-            targetRow.kindPopup.selectItem(at: 0)
-            _ = targetRow.kindPopup.sendAction(targetRow.kindPopup.action, to: targetRow.kindPopup.target)
+            targetRow.kindButton.performClick(nil)
             timerPanel.makeFirstResponder(targetRow.durationInput.minutes.field)
-            targetRow.kindPopup.selectItem(at: 1)
-            _ = targetRow.kindPopup.sendAction(targetRow.kindPopup.action, to: targetRow.kindPopup.target)
+            targetRow.kindButton.performClick(nil)
             RunLoop.main.run(until: Date().addingTimeInterval(0.01))
-            allSwitchesSucceeded = allSwitchesSucceeded && timers.timers[0].inputKind == .targetTime && targetRow.kindPopup.indexOfSelectedItem == 1 && targetRow.targetInput.hours.field.currentEditor() != nil
+            allSwitchesSucceeded = allSwitchesSucceeded && timers.timers[0].inputKind == .targetTime && targetRow.kindButton.image != nil && targetRow.targetInput.hours.field.currentEditor() != nil
         }
         check(allSwitchesSucceeded, "repeated duration-to-target switches remain stable with an active numeric field")
         // Exercise the real field editor and play action against a fixed local time.
@@ -483,11 +487,10 @@ enum RuntimeChecks {
         timers.reset(targetID)
         timers.editInput(targetID, text: "18:")
         timers.primaryAction(targetID, at: localNow)
-        let modePickerIsAvailable = !targetRow.kindPopup.isHidden && timers.errors[targetID] != nil
-        targetRow.kindPopup.selectItem(at: 0)
-        _ = targetRow.kindPopup.sendAction(targetRow.kindPopup.action, to: targetRow.kindPopup.target)
+        let modePickerIsAvailable = !targetRow.kindButton.isHidden && timers.errors[targetID] != nil
+        targetRow.kindButton.performClick(nil)
         check(modePickerIsAvailable && timers.timers[0].inputKind == .duration && timers.errors[targetID] == nil,
-              "invalid target text leaves the mode picker available and can switch back to duration")
+              "invalid target text leaves the mode icon available and can switch back to duration")
         timers.remove(targetRow.id)
         let previousAppAppearance = NSApp.appearance
         defer { NSApp.appearance = previousAppAppearance }
@@ -626,6 +629,20 @@ enum RuntimeChecks {
                         panel.appearance?.performAsCurrentDrawingAppearance { view.cacheDisplay(in: view.bounds, to: reduced) }
                         try reduced.representation(using: .png, properties: [:])!.write(
                             to: URL(fileURLWithPath: directory).appendingPathComponent("timers-after-removal-\(appearance.rawValue)-\(side).png"))
+                        for id in timers.timers.map(\.id) { timers.remove(id) }
+                        for count in 1...3 {
+                            let added = timers.add()!
+                            if count == 2 {
+                                timers.setInputKind(added, kind: .targetTime)
+                                timers.editInput(added, text: "19:30")
+                            }
+                            panel.recordingButton.isHidden = false
+                            panel.face.layoutSubtreeIfNeeded()
+                            let editors = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+                            panel.appearance?.performAsCurrentDrawingAppearance { view.cacheDisplay(in: view.bounds, to: editors) }
+                            try editors.representation(using: .png, properties: [:])!.write(
+                                to: URL(fileURLWithPath: directory).appendingPathComponent("timer-editors-\(appearance.rawValue)-\(count)-\(side).png"))
+                        }
                     }
                     panel.hideClock()
                 }

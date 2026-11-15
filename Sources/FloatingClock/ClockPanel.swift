@@ -6,6 +6,7 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
     let quickAccessPanel = QuickAccessPanel()
     let recordingButton = QuickAccessButton(title: "", target: nil, action: nil)
     let timerTray = TimerTrayView(frame: .zero)
+    let timerHint = NSTextField(labelWithString: "＋ 倒计时  ·  − 累计时间")
     var timerCoordinator: TimerCoordinator? {
         didSet { timerTray.coordinator = timerCoordinator; refreshTimers() }
     }
@@ -14,6 +15,7 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
     private var pointerInside = false
     private var layingOut = false
     private var trayHeight: CGFloat = 0
+    private var footerHeight: CGFloat = 0
     var onPositionChanged: ((CGPoint) -> Void)?
     var onQuickMenuRequested: ((NSView) -> Void)?
 
@@ -60,6 +62,11 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         recordingButton.toolTip = "添加倒计时 / 累计计时（最多三组）"
         recordingButton.setAccessibilityLabel("添加计时，最多三组")
         face.addSubview(timerTray)
+        timerHint.font = .systemFont(ofSize: 10)
+        timerHint.textColor = .secondaryLabelColor
+        timerHint.alignment = .center
+        timerHint.isHidden = true
+        face.addSubview(timerHint)
         face.addSubview(recordingButton)
         timerTray.isHidden = true
         delegate = self
@@ -78,6 +85,7 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         if settings.isLocked { makeFirstResponder(nil); resignKey() }
         face.settings = settings
         timerTray.appearance = settings.appearance == .system ? nil : NSAppearance(named: settings.appearance == .dark ? .darkAqua : .aqua)
+        timerHint.appearance = timerTray.appearance
         timerTray.refresh(settings: settings)
         layoutPanel(anchoredAt: CGRect(origin: clamped, size: CGSize(width: side, height: side)))
         refreshPointerLocation()
@@ -88,11 +96,14 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
     func refreshTimers() {
         let height = TimerTrayView.height(count: timerCoordinator?.timers.count ?? 0,
                                          hasNotice: timerCoordinator?.notificationMessage != nil)
+        let newFooterHeight: CGFloat = timerCoordinator?.timers.count == 1 ? 28 : 0
+        timerHint.isHidden = newFooterHeight == 0
         timerTray.refresh(settings: settings)
         timerTray.isHidden = height == 0
-        if height != trayHeight {
+        if height != trayHeight || footerHeight != newFooterHeight {
             let dial = clockScreenFrame
             trayHeight = height
+            footerHeight = newFooterHeight
             layoutPanel(anchoredAt: dial)
             onPositionChanged?(clockScreenFrame.origin)
             refreshPointerLocation()
@@ -154,10 +165,12 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
             let ia = a.visibleFrame.intersection(dial), ib = b.visibleFrame.intersection(dial)
             return (ia.isNull ? 0 : ia.width * ia.height) < (ib.isNull ? 0 : ib.width * ib.height)
         }?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
-        let layout = TimerAttachmentLayout(clock: dial, trayHeight: trayHeight, screen: screenFrame)
+        let layout = TimerAttachmentLayout(clock: dial, trayHeight: trayHeight, screen: screenFrame, footerHeight: footerHeight)
         setFrame(layout.frame, display: true)
         face.dialFrame = layout.dialFrame
         timerTray.frame = layout.trayFrame
+        timerHint.frame = CGRect(x: ClockLayout.padding + 10, y: ClockLayout.padding + 6,
+                                 width: layout.frame.width - ClockLayout.padding * 2 - 20, height: 16)
         face.needsDisplay = true
     }
 
@@ -192,6 +205,7 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         }
         var children: [Any] = []
         if !timerTray.isHidden { children.append(timerTray) }
+        if !timerHint.isHidden { children.append(timerHint) }
         if showRecording { children.append(recordingButton) }
         if quickAccessPanel.isVisible { children.append(quickAccessPanel.button) }
         face.setAccessibilityChildren(children)
