@@ -247,4 +247,31 @@ final class ClockTimerTests: XCTestCase {
             XCTAssertEqual(layout.frame.height, clock.height + 98 + 28)
         }
     }
+
+    func testAttachmentAndQuickEntrySwitchAtTheSameScreenMidline() {
+        let screen = CGRect(x: -1920, y: 1080, width: 1920, height: 1080)
+        for trayHeight in [62.0, 170] {
+            for offset in [-1.0, 0, 1, -1, 1] {
+                let dial = CGRect(x: -1800, y: screen.midY - 124 + offset, width: 248, height: 248)
+                let layout = TimerAttachmentLayout(clock: dial, trayHeight: trayHeight, screen: screen,
+                                                    footerHeight: trayHeight == 62 ? 28 : 0, constrainToScreen: false)
+                XCTAssertEqual(layout.isAbove, QuickAccessLayout.corner(for: dial, on: screen).isBottom)
+                XCTAssertEqual(layout.dialFrame.offsetBy(dx: layout.frame.minX, dy: layout.frame.minY), dial)
+            }
+        }
+    }
+
+    func testDraggingKeepsTheDialAnchoredAcrossEdgesAndOversizedAttachments() {
+        let screen = CGRect(x: -1920, y: 1080, width: 1920, height: 800)
+        for side in [164.0, 384] {
+            for x in [screen.minX - 40, screen.maxX - side + 40] {
+                for y in [screen.minY - 40, screen.midY - side / 2, screen.maxY - side + 40] {
+                    let dial = CGRect(x: x, y: y, width: side, height: side)
+                    let layout = TimerAttachmentLayout(clock: dial, trayHeight: 254, screen: screen,
+                                                        footerHeight: 28, constrainToScreen: false)
+                    XCTAssertEqual(layout.dialFrame.offsetBy(dx: layout.frame.minX, dy: layout.frame.minY), dial)
+                }
+            }
+        }
+    }
 }

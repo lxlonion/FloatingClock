@@ -598,10 +598,101 @@ enum RuntimeChecks {
         timerPanel.makeFirstResponder(nil)
         for id in [idleDuration, idleTarget, stoppedElapsed] { timers.remove(id) }
         checkTimerInputRegressions(check)
+        checkTimerDragging(check)
         let result: [String: Any] = ["passed": failures.isEmpty, "count": checks.count, "checks": checks, "failures": failures]
         let data = try! JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
         print(String(data: data, encoding: .utf8)!)
         return failures.isEmpty ? 0 : 1
+    }
+
+    private static func checkTimerDragging(_ check: (Bool, String) -> Void) {
+        let suite = "FloatingClock.drag-regressions.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let timers = TimerCoordinator(store: ClockTimerStore(defaults: defaults), notifications: CheckTimerNotifications())
+        let panel = ClockPanel(settings: ClockSettings())
+        panel.timerCoordinator = timers
+        timers.onChange = { [weak panel] in panel?.refreshTimers() }
+        panel.showClock()
+        defer { panel.hideClock() }
+        guard let screen = panel.screen?.visibleFrame else { check(false, "drag checks have a display"); return }
+
+        func event(_ type: NSEvent.EventType, at point: CGPoint) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: panel.convertPoint(fromScreen: point), modifierFlags: [],
+                               timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber,
+                               context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)!
+        }
+        func screenPoint(in view: NSView, _ point: CGPoint) -> CGPoint {
+            panel.convertPoint(toScreen: view.convert(point, to: nil))
+        }
+        var savedOrigins: [CGPoint] = []
+        panel.onPositionChanged = { savedOrigins.append($0) }
+        for count in [1, 3] {
+            while timers.timers.count < count { _ = timers.add() }
+            let start = panel.clockScreenFrame
+            let gripOffset = CGPoint(x: start.width * 0.35, y: start.height * 0.7)
+            let grip = CGPoint(x: start.minX + gripOffset.x, y: start.minY + gripOffset.y)
+            panel.sendEvent(event(.leftMouseDown, at: grip))
+            let savesBefore = savedOrigins.count
+            var followsPointer = true
+            var directionMatches = true
+            var entryMatches = true
+            var footerStaysAtBottom = true
+            // Visit every quadrant, then cross the midline repeatedly without
+            // releasing the mouse. Every assertion precedes mouseUp.
+            for (dx, dy) in [(-1.0, 80.0), (1, 80), (-1, -80), (1, -80), (1, 1), (1, -1), (1, 1)] {
+                let desired = CGRect(x: screen.midX + dx * 150 - start.width / 2,
+                                     y: screen.midY + dy - start.height / 2, width: start.width, height: start.height)
+                let pointer = CGPoint(x: desired.minX + gripOffset.x, y: desired.minY + gripOffset.y)
+                panel.sendEvent(event(.leftMouseDragged, at: pointer))
+                let actual = panel.clockScreenFrame
+                followsPointer = followsPointer && abs(actual.minX - desired.minX) < 0.01 && abs(actual.minY - desired.minY) < 0.01
+                let corner = QuickAccessLayout.corner(for: desired, on: screen)
+                directionMatches = directionMatches && (panel.timerTray.frame.midY > panel.face.dialCard.midY) == corner.isBottom
+                panel.face.onHoverChanged?(true)
+                entryMatches = entryMatches && panel.face.quickAccessCorner == corner &&
+                    panel.recordingButton.frame == QuickAccessLayout.buttonFrame(in: panel.face.dialCard, corner: corner)
+                footerStaysAtBottom = footerStaysAtBottom && (count != 1 ||
+                    (panel.timerHint.frame.maxY < panel.timerTray.frame.minY && panel.timerHint.frame.maxY < panel.face.dialCard.minY))
+            }
+            check(followsPointer, "\(count) timers keep the dial under the same mouse grip throughout direction changes")
+            check(directionMatches && entryMatches, "\(count) timers and the add entry change sides immediately during one continuous drag")
+            check(footerStaysAtBottom, "\(count) timers keep the single-timer hint at the bottom while dragging")
+            check(savedOrigins.count == savesBefore, "\(count) timers defer saving position until mouse release")
+            let finalDial = panel.clockScreenFrame
+            panel.sendEvent(event(.leftMouseUp, at: CGPoint(x: finalDial.minX + gripOffset.x, y: finalDial.minY + gripOffset.y)))
+            check(savedOrigins.count == savesBefore + 1 && savedOrigins.last == panel.clockScreenFrame.origin &&
+                  panel.clockScreenFrame == finalDial && screen.contains(panel.frame),
+                  "\(count) timers constrain and save the final position on mouse release")
+
+            panel.face.layoutSubtreeIfNeeded()
+            let row = panel.timerTray.rows[0]
+            let points = [screenPoint(in: row, CGPoint(x: row.bounds.midX, y: 2)),
+                          screenPoint(in: panel.timerTray, CGPoint(x: 1, y: panel.timerTray.bounds.midY))] +
+                (count == 1 ? [screenPoint(in: panel.timerHint, CGPoint(x: panel.timerHint.bounds.midX, y: panel.timerHint.bounds.midY))] : [])
+            let before = panel.frame
+            let saves = savedOrigins.count
+            for point in points {
+                let local = panel.face.convert(panel.convertPoint(fromScreen: point), from: nil)
+                let hit = panel.face.hitTest(local) ?? panel.face
+                hit.mouseDown(with: event(.leftMouseDown, at: point))
+                hit.mouseDragged(with: event(.leftMouseDragged, at: CGPoint(x: point.x + 80, y: point.y + 80)))
+                hit.mouseUp(with: event(.leftMouseUp, at: point))
+            }
+            check(panel.frame == before && savedOrigins.count == saves && !panel.face.mouseDownCanMoveWindow,
+                  "\(count) timers ignore drags on row backgrounds, tray gaps and the footer")
+        }
+        var locked = ClockSettings()
+        locked.isLocked = true
+        panel.apply(locked)
+        let before = panel.frame
+        let dial = panel.clockScreenFrame
+        let point = CGPoint(x: dial.midX, y: dial.midY)
+        panel.face.mouseDown(with: event(.leftMouseDown, at: point))
+        panel.face.mouseDragged(with: event(.leftMouseDragged, at: CGPoint(x: point.x + 80, y: point.y - 80)))
+        panel.face.mouseUp(with: event(.leftMouseUp, at: point))
+        check(panel.frame == before && panel.quickAccessPanel.isVisible && panel.ignoresMouseEvents,
+              "locked clock ignores dial drags and retains its clickable quick entry")
     }
 
     private static func checkTimerInputRegressions(_ check: (Bool, String) -> Void) {

@@ -4,6 +4,7 @@ import ClockCore
 final class ClockFaceView: NSView {
     var settings = ClockSettings() { didSet { needsDisplay = true; window?.invalidateCursorRects(for: self) } }
     var fixedDate: Date?
+    var onDragMoved: ((CGRect) -> Void)?
     var onDragFinished: (() -> Void)?
     var onContextMenu: ((NSEvent) -> Void)?
     var onHoverChanged: ((Bool) -> Void)?
@@ -12,8 +13,10 @@ final class ClockFaceView: NSView {
     var quickAccessCorner: ClockCorner? { didSet { if oldValue != quickAccessCorner { needsDisplay = true } } }
     private var minutePathCache: (minute: String, card: CGRect, size: Double, path: CGPath)?
     private var hoverTracking: NSTrackingArea?
+    private var dragStart: (pointer: CGPoint, dial: CGRect)?
 
     override var acceptsFirstResponder: Bool { false }
+    override var mouseDownCanMoveWindow: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func updateTrackingAreas() {
@@ -34,8 +37,24 @@ final class ClockFaceView: NSView {
     override func mouseDown(with event: NSEvent) {
         guard !settings.isLocked else { return }
         if event.modifierFlags.contains(.control) { onContextMenu?(event); return }
+        let location = convert(event.locationInWindow, from: nil)
+        guard let window, (dialFrame ?? bounds).contains(location), hitTest(location) === self else { return }
+        dragStart = (window.convertPoint(toScreen: event.locationInWindow),
+                     window.convertToScreen(convert(dialFrame ?? bounds, to: nil)))
         NSCursor.closedHand.push()
-        window?.performDrag(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard !settings.isLocked, let window, let dragStart else { return }
+        let pointer = window.convertPoint(toScreen: event.locationInWindow)
+        // Anchor to the dial, since moving the timer tray changes the window's
+        // origin underneath an ongoing drag.
+        onDragMoved?(dragStart.dial.offsetBy(dx: pointer.x - dragStart.pointer.x, dy: pointer.y - dragStart.pointer.y))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard dragStart != nil else { return }
+        dragStart = nil
         NSCursor.pop()
         onDragFinished?()
     }

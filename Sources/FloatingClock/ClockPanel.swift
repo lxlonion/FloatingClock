@@ -50,6 +50,11 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         face.setAccessibilityElement(true)
         face.setAccessibilityRole(.group)
         face.setAccessibilityLabel("漂浮指针时钟；右键打开快捷设置，解锁后移入显示计时入口")
+        face.onDragMoved = { [weak self] dial in
+            self?.layoutPanel(anchoredAt: dial, constrainToScreen: false)
+            self?.refreshPointerLocation()
+            self?.updateQuickAccess()
+        }
         face.onDragFinished = { [weak self] in self?.constrainAndSavePosition() }
         face.onHoverChanged = { [weak self] inside in
             self?.pointerInside = inside
@@ -151,26 +156,33 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
 
     func windowDidMove(_ notification: Notification) {
         guard !layingOut else { return }
+        layoutPanel(anchoredAt: clockScreenFrame, constrainToScreen: false)
         refreshPointerLocation()
         updateQuickAccess()
     }
     func windowDidResize(_ notification: Notification) { if !layingOut { updateQuickAccess() } }
 
-    private func layoutPanel(anchoredAt dial: CGRect) {
+    private func layoutPanel(anchoredAt dial: CGRect, constrainToScreen: Bool = true) {
         guard !layingOut else { return }
         layingOut = true
         defer { layingOut = false }
-        let screenFrame = NSScreen.screens.max { a, b in
-            let ia = a.visibleFrame.intersection(dial), ib = b.visibleFrame.intersection(dial)
-            return (ia.isNull ? 0 : ia.width * ia.height) < (ib.isNull ? 0 : ib.width * ib.height)
-        }?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
-        let layout = TimerAttachmentLayout(clock: dial, trayHeight: trayHeight, screen: screenFrame, footerHeight: footerHeight)
-        setFrame(layout.frame, display: true)
+        let screenFrame = layoutScreenFrame(for: dial)
+        let layout = TimerAttachmentLayout(clock: dial, trayHeight: trayHeight, screen: screenFrame,
+                                           footerHeight: footerHeight, constrainToScreen: constrainToScreen)
+        if frame != layout.frame { setFrame(layout.frame, display: false) }
         face.dialFrame = layout.dialFrame
         timerTray.frame = layout.trayFrame
         timerHint.frame = CGRect(x: ClockLayout.padding + 10, y: ClockLayout.padding + 6,
                                  width: layout.frame.width - ClockLayout.padding * 2 - 20, height: 16)
         face.needsDisplay = true
+        invalidateCursorRects(for: face)
+    }
+
+    private func layoutScreenFrame(for dial: CGRect) -> CGRect {
+        NSScreen.screens.max { a, b in
+            let ia = a.visibleFrame.intersection(dial), ib = b.visibleFrame.intersection(dial)
+            return (ia.isNull ? 0 : ia.width * ia.height) < (ib.isNull ? 0 : ib.width * ib.height)
+        }?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
     }
 
     private func refreshPointerLocation() {
@@ -178,7 +190,7 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
     }
 
     private func updateQuickAccess() {
-        let screenFrame = (screen ?? NSScreen.main)?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let screenFrame = layoutScreenFrame(for: clockScreenFrame)
         let corner = QuickAccessLayout.corner(for: clockScreenFrame, on: screenFrame)
         let card = face.dialCard
         let buttonFrame = QuickAccessLayout.buttonFrame(in: card, corner: corner)
