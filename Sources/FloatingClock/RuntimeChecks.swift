@@ -334,11 +334,20 @@ enum RuntimeChecks {
         check(timers.notificationMessage == "通知未开启", "notification permission failure is surfaced in the timer card")
         timerPanel.hideClock()
         timers.tick(at: started.addingTimeInterval(2))
-        check(timers.timers[0].state == .completed && !timerPanel.isVisible && timerPanel.recordingButton.isHidden,
-              "hidden clock still completes countdowns at zero without reopening itself")
+        check(timers.timers[0].state == .running && timers.timers[0].isOvertime && !timerPanel.isVisible && timerPanel.recordingButton.isHidden,
+              "hidden clock crosses zero into overtime without reopening itself")
         let afterCompletion = scheduler.scheduled.count
         timers.tick(at: started.addingTimeInterval(20))
         check(scheduler.scheduled.count == afterCompletion, "countdown completion does not send duplicate notifications")
+        check(countdown.signButton.title == "−" && timers.timers[0].seconds(at: started.addingTimeInterval(20)) == 19,
+              "overtime switches the visible sign to minus and counts from the original deadline")
+        let cancelledBeforeOvertimeStop = scheduler.cancelled.count
+        timers.primaryAction(countdown.id, at: started.addingTimeInterval(21))
+        check(timers.timers[0].state == .paused && timers.timers[0].seconds(at: started.addingTimeInterval(40)) == 20 && scheduler.cancelled.count == cancelledBeforeOvertimeStop,
+              "stopping overtime preserves the overrun and its already due notification")
+        timers.primaryAction(countdown.id, at: started.addingTimeInterval(40))
+        check(timers.timers[0].state == .running && timers.timers[0].seconds(at: started.addingTimeInterval(45)) == 25 && scheduler.scheduled.count == afterCompletion,
+              "resuming overtime continues the negative count without another notification")
         countdown.deleteButton.performClick(nil)
         timerPanel.timerTray.rows[0].deleteButton.performClick(nil)
         let side = ClockSettings().faceSize + ClockLayout.padding * 2

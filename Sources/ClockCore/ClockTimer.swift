@@ -119,6 +119,10 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
     public private(set) var duration: TimeInterval = 0
     public private(set) var accumulated: TimeInterval = 0
     public private(set) var startedAt: Date?
+    // Optional so timers saved before overtime was introduced still decode.
+    private var overtime: Bool?
+    public var isOvertime: Bool { overtime == true }
+    public var countsDown: Bool { mode == .countdown && !isOvertime }
 
     public init(id: UUID = UUID()) { self.id = id }
 
@@ -133,11 +137,14 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
     }
 
     public func seconds(at date: Date) -> TimeInterval {
-        mode == .countdown ? max(0, duration - elapsed(at: date)) : elapsed(at: date)
+        if mode == .countdown {
+            return isOvertime ? max(0, elapsed(at: date) - duration) : max(0, duration - elapsed(at: date))
+        }
+        return elapsed(at: date)
     }
 
     public var deadline: Date? {
-        guard mode == .countdown, state == .running, let startedAt else { return nil }
+        guard countsDown, state == .running, let startedAt else { return nil }
         return startedAt.addingTimeInterval(duration - accumulated)
     }
 
@@ -159,12 +166,13 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
         duration = value
         accumulated = mode == .elapsed ? value : 0
         startedAt = date
+        overtime = nil
         state = .running
     }
 
     public mutating func pause(at date: Date) {
         guard state == .running else { return }
-        if finishIfNeeded(at: date) { return }
+        finishIfNeeded(at: date)
         accumulated = elapsed(at: date)
         startedAt = nil
         state = .paused
@@ -177,10 +185,10 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
     }
 
     @discardableResult public mutating func finishIfNeeded(at date: Date) -> Bool {
-        guard state == .running, mode == .countdown, seconds(at: date) <= 0 else { return false }
-        accumulated = duration
-        startedAt = nil
-        state = .completed
+        guard state == .running, countsDown, seconds(at: date) <= 0 else { return false }
+        // Keep the original start and elapsed time: late ticks, sleep and relaunch
+        // must include all time since the deadline, rather than restarting at zero.
+        overtime = true
         return true
     }
 
@@ -189,6 +197,7 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
         duration = 0
         accumulated = 0
         startedAt = nil
+        overtime = nil
     }
 }
 

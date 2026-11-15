@@ -19,7 +19,7 @@ final class ClockTimerTests: XCTestCase {
         }
     }
 
-    func testCountdownRoundsUpReachesZeroAndCompletesOnce() throws {
+    func testCountdownRoundsUpThenRunsOvertimeAndTransitionsOnce() throws {
         var timer = ClockTimer()
         timer.input = "2秒"
         try timer.start(at: now)
@@ -27,10 +27,62 @@ final class ClockTimerTests: XCTestCase {
         XCTAssertEqual(TimerDisplayFormat.totalMinutes.string(seconds: timer.seconds(at: now.addingTimeInterval(1.2)), countingDown: true), "00分01秒")
         XCTAssertFalse(timer.finishIfNeeded(at: now.addingTimeInterval(1.99)))
         XCTAssertTrue(timer.finishIfNeeded(at: now.addingTimeInterval(2)))
-        XCTAssertEqual(timer.seconds(at: now.addingTimeInterval(100)), 0)
-        XCTAssertEqual(timer.state, .completed)
+        XCTAssertEqual(timer.seconds(at: now.addingTimeInterval(100)), 98)
+        XCTAssertEqual(timer.state, .running)
+        XCTAssertTrue(timer.isOvertime)
         XCTAssertNil(timer.deadline)
         XCTAssertFalse(timer.finishIfNeeded(at: now.addingTimeInterval(100)))
+    }
+
+
+    func testOvertimeStopResumeAndResetPreserveOriginalInput() throws {
+        var timer = ClockTimer()
+        timer.input = "1分钟"
+        try timer.start(at: now)
+        // Stopping before the UI's next tick must first account for the crossing.
+        timer.pause(at: now.addingTimeInterval(75))
+        XCTAssertTrue(timer.isOvertime)
+        XCTAssertEqual(timer.state, .paused)
+        XCTAssertEqual(timer.seconds(at: now.addingTimeInterval(500)), 15)
+        timer.resume(at: now.addingTimeInterval(500))
+        XCTAssertNil(timer.deadline)
+        XCTAssertEqual(timer.seconds(at: now.addingTimeInterval(510)), 25)
+        timer.reset()
+        XCTAssertFalse(timer.isOvertime)
+        XCTAssertTrue(timer.countsDown)
+        XCTAssertEqual(timer.input, "1分钟")
+        try timer.start(at: now)
+        XCTAssertEqual(timer.deadline, now.addingTimeInterval(60))
+    }
+
+    func testOvertimeSurvivesSerializationAndLateWakeKeepsFullOverrun() throws {
+        var timer = ClockTimer()
+        timer.input = "1"
+        try timer.start(at: now)
+        var restored = try JSONDecoder().decode(ClockTimer.self, from: JSONEncoder().encode(timer))
+        XCTAssertTrue(restored.finishIfNeeded(at: now.addingTimeInterval(3600)))
+        XCTAssertEqual(restored.seconds(at: now.addingTimeInterval(3600)), 3540)
+        let overtime = try JSONDecoder().decode(ClockTimer.self, from: JSONEncoder().encode(restored))
+        XCTAssertTrue(overtime.isOvertime)
+        XCTAssertNil(overtime.deadline)
+        XCTAssertEqual(overtime.seconds(at: now.addingTimeInterval(3660)), 3600)
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(timer)) as! [String: Any]
+        json.removeValue(forKey: "overtime")
+        let legacy = try JSONDecoder().decode(ClockTimer.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertFalse(legacy.isOvertime)
+        XCTAssertEqual(legacy.deadline, now.addingTimeInterval(60))
+    }
+
+    func testStoppingExactlyAtZeroKeepsOvertimePaused() throws {
+        var timer = ClockTimer()
+        timer.input = "1秒"
+        try timer.start(at: now)
+        timer.pause(at: now.addingTimeInterval(1))
+        XCTAssertTrue(timer.isOvertime)
+        XCTAssertEqual(timer.state, .paused)
+        XCTAssertEqual(timer.seconds(at: now.addingTimeInterval(20)), 0)
+        timer.resume(at: now.addingTimeInterval(20))
+        XCTAssertEqual(timer.seconds(at: now.addingTimeInterval(21)), 1)
     }
 
     func testNegativeZeroStartsElapsedAndStopResumePreservesElapsedTime() throws {
@@ -103,7 +155,8 @@ final class ClockTimerTests: XCTestCase {
         XCTAssertTrue(timer.isValid)
         XCTAssertEqual(timer.deadline, try TimerInputParser.targetDate(timer.input, now: now, calendar: calendar))
         XCTAssertTrue(timer.finishIfNeeded(at: now.addingTimeInterval(1_000_000_000)))
-        XCTAssertEqual(timer.state, .completed)
+        XCTAssertEqual(timer.state, .running)
+        XCTAssertTrue(timer.isOvertime)
     }
 
     func testDisplayFormatAndLegacyPreferenceMigration() throws {

@@ -80,16 +80,16 @@ final class TimerRowView: NSView, NSTextFieldDelegate {
         wantsLayer = true
         layer?.backgroundColor = ink.withAlphaComponent(0.045).cgColor
         layer?.cornerRadius = 12
-        signButton.title = timer.mode == .countdown ? "+" : "−"
-        signButton.contentTintColor = timer.mode == .countdown ? .systemRed : ink
+        signButton.title = timer.countsDown ? "+" : "−"
+        signButton.contentTintColor = timer.countsDown || timer.isOvertime ? .systemRed : ink
         signButton.isEnabled = timer.state != .running
         signButton.toolTip = "点击切换：＋ 倒计时，− 累计计时"
-        signButton.setAccessibilityLabel(timer.mode == .countdown ? "倒计时；点击切换为累计计时" : "累计计时；点击切换为倒计时")
-        let text = editing ? timer.input : settings.timerDisplayFormat.string(seconds: timer.seconds(at: now), countingDown: timer.mode == .countdown)
+        signButton.setAccessibilityLabel(timer.countsDown ? "倒计时；点击切换为累计计时" : "累计计时；点击切换为倒计时")
+        let text = editing ? timer.input : settings.timerDisplayFormat.string(seconds: timer.seconds(at: now), countingDown: timer.countsDown)
         if timeField.stringValue != text { timeField.stringValue = text }
         timeField.isEditable = editing
         timeField.isSelectable = editing
-        timeField.textColor = timer.state == .completed ? .systemRed : ink
+        timeField.textColor = timer.isOvertime || timer.state == .completed ? .systemRed : ink
         timeField.font = .monospacedDigitSystemFont(ofSize: settings.faceSize < 224 ? 14 : 16, weight: .medium)
         timeField.placeholderString = timer.inputKind == .duration ? "分钟 / 1小时30min" : "18:30"
         timeField.toolTip = timer.inputKind == .duration ? "数字按分钟；也可输入 90:00、1小时30min、30秒。− 从 0 开始累计。" : "输入 HH:mm、HH:mm:ss 或 yyyy-MM-dd HH:mm；只填时刻时取下一次该时刻。"
@@ -109,8 +109,8 @@ final class TimerRowView: NSView, NSTextFieldDelegate {
         else {
             switch timer.state {
             case .idle: statusLabel.stringValue = timer.mode == .elapsed ? "从已用时开始" : "输入后点 ▶"
-            case .running: statusLabel.stringValue = timer.mode == .elapsed ? "正在累计" : "倒计时中 · 到时通知"
-            case .paused: statusLabel.stringValue = "已停止 · 可继续"
+            case .running: statusLabel.stringValue = timer.isOvertime ? "时间到了 · 正在累计超时" : (timer.mode == .elapsed ? "正在累计" : "倒计时中 · 到时通知")
+            case .paused: statusLabel.stringValue = timer.isOvertime ? "超时已停止 · 可继续" : "已停止 · 可继续"
             case .completed: statusLabel.stringValue = "时间到了"
             }
         }

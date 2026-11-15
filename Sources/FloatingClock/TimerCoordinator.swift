@@ -128,11 +128,12 @@ final class TimerCoordinator {
 
     func toggleMode(_ id: UUID) {
         guard let index = editableIndex(id) else { return }
+        let mode: ClockTimerMode = timers[index].countsDown ? .elapsed : .countdown
         notifications.cancel(id)
         notificationGenerations[id] = nil
         notificationErrors[id] = nil
         timers[index].reset()
-        timers[index].mode = timers[index].mode == .countdown ? .elapsed : .countdown
+        timers[index].mode = mode
         if timers[index].mode == .elapsed {
             timers[index].inputKind = .duration
             timers[index].input = "0"
@@ -164,9 +165,8 @@ final class TimerCoordinator {
         switch timers[index].state {
         case .running:
             // A click at/after the deadline must not withdraw an already due notification.
-            let completed = timers[index].finishIfNeeded(at: now)
-            if !completed {
-                timers[index].pause(at: now)
+            timers[index].pause(at: now)
+            if !timers[index].isOvertime {
                 notifications.cancel(id)
                 notificationGenerations[id] = nil
                 notificationErrors[id] = nil
