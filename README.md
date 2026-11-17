@@ -322,6 +322,8 @@ flowchart LR
 - 开启秒针时约以 30 Hz 请求重绘；关闭秒针时约每秒刷新一次。
 - 隐藏时钟会停止绘制定时器，重新显示后恢复。
 - 分钟数字的原始字形轮廓会缓存；当前分钟、表盘尺寸或大字大小改变时更新绘制路径。
+- 卡片与阴影由独立的 `CALayer` 保留；刻度、数字、日期及分钟大字缓存在单个 `CGLayer` 中，正常窗口每帧仅复用静态层并绘制指针与 halo。显示内容、外观、尺寸、实际设备像素密度或色彩空间改变时自动更新缓存。
+- 翻转或旋转的特殊绘制目标保留原始绘制路径，以保持 AppKit 的文字方向与像素效果，不影响正常窗口的静态缓存。
 - 表盘位置与“＋”入口布局以当前显示器为参照，支持负坐标显示器。
 
 ## 项目结构
@@ -352,6 +354,7 @@ FloatingClock/
 │       ├── TimerTrayView.swift          # 三组计时的输入和读数
 │       ├── TimerTimeInput.swift         # 共用数字框、上下调节与光标跳转
 │       ├── LiveDisplayChecks.swift     # WindowServer 实窗重绘回归
+│       ├── DialCacheChecks.swift       # 静态绘制缓存、失效与像素回归
 │       └── RuntimeChecks.swift         # 原生检查与文档预览生成
 ├── Tests/ClockCoreTests/
 ├── Resources/

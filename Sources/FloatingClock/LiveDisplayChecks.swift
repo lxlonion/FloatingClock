@@ -14,6 +14,9 @@ enum LiveDisplayChecks {
         settings.showsSeconds = true
         let panel = ClockPanel(settings: settings)
         panel.mouseLocationProvider = { CGPoint(x: -100_000, y: -100_000) }
+        // Stages below control hover explicitly; physical cursor events must
+        // not overwrite the simulated date occlusion between captures.
+        panel.face.onHoverChanged = { _ in }
         let calendar = Calendar.current
         let date = calendar.date(from: DateComponents(year: 2026, month: 11, day: 14, hour: 10, minute: 15, second: 36))!
         let six = calendar.date(from: DateComponents(year: 2026, month: 11, day: 14, hour: 6))!
@@ -23,6 +26,8 @@ enum LiveDisplayChecks {
         panel.showClock()
         var images: [String: NSBitmapImageRep] = [:]
         var checks: [[String: Any]] = []
+        var buildsAfterOffscreen = 0
+        var buildsAfterLive = 0
         func check(_ condition: Bool, _ name: String, _ detail: String = "") {
             checks.append(["name": name, "passed": condition, "detail": detail])
         }
@@ -67,6 +72,32 @@ enum LiveDisplayChecks {
                 }
             }
             return count
+        }
+        func warmOnePixelPerPointCache() {
+            // A real Retina window can have an identity CTM and a 2x default
+            // device transform. This bitmap also has an identity CTM, but 1x
+            // device density. Match the color space to isolate the density key.
+            let bounds = panel.face.bounds
+            let space = panel.colorSpace?.cgColorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
+            let context = CGContext(data: nil, width: Int(bounds.width), height: Int(bounds.height),
+                                    bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+            panel.face.drawDial(bounds)
+            NSGraphicsContext.restoreGraphicsState()
+        }
+        func maximumComponentDifference(_ a: NSBitmapImageRep?, _ b: NSBitmapImageRep?) -> Int {
+            guard let a, let b, a.pixelsWide == b.pixelsWide, a.pixelsHigh == b.pixelsHigh,
+                  a.samplesPerPixel == b.samplesPerPixel, a.bitsPerSample == 8, b.bitsPerSample == 8,
+                  let ap = a.bitmapData, let bp = b.bitmapData else { return 255 }
+            var maximum = 0
+            for y in 0..<a.pixelsHigh {
+                for x in 0..<(a.pixelsWide * a.samplesPerPixel) {
+                    maximum = max(maximum, abs(Int(ap[y * a.bytesPerRow + x]) - Int(bp[y * b.bytesPerRow + x])))
+                }
+            }
+            return maximum
         }
         let card = panel.face.dialCard
         let scale = card.width / 224
@@ -210,6 +241,52 @@ enum LiveDisplayChecks {
                 let changed = differences(images["11-before-cache"], images["12-after-cache"], in: panel.face.bounds)
                 check(images["11-before-cache"] != nil && images["12-after-cache"] != nil && changed == 0,
                       "snapshot leaves the actual window unchanged", "changed pixels=\(changed)")
+                settings.style = .cardinalNumbers
+                settings.showsMinuteNumerals = true
+                settings.minuteNumeralOpacity = 100
+                settings.transparency = 0
+                panel.face.fixedDate = date
+                panel.apply(settings)
+                warmOnePixelPerPointCache()
+                buildsAfterOffscreen = panel.face.staticDialRenderCount
+            }),
+            (0.5, {
+                capture("13-live-after-1x")
+                let builds = panel.face.staticDialRenderCount
+                let expected = buildsAfterOffscreen + (panel.backingScaleFactor == 1 ? 0 : 1)
+                check(builds == expected, "real backing density selects a new cache after a 1x identity-CTM bitmap",
+                      "scale=\(panel.backingScaleFactor), builds=\(buildsAfterOffscreen)->\(builds), expected=\(expected)")
+                panel.face.viewDidChangeBackingProperties()
+            }),
+            (0.5, {
+                capture("14-fresh-live-reference")
+                let difference = maximumComponentDifference(images["13-live-after-1x"], images["14-fresh-live-reference"])
+                check(difference <= 1, "returning from a 1x bitmap stays as sharp as a fresh live cache",
+                      "maximum component difference=\(difference)/255")
+                let builds = panel.face.staticDialRenderCount
+                warmOnePixelPerPointCache()
+                let expected = builds + (panel.backingScaleFactor == 1 ? 0 : 1)
+                check(panel.face.staticDialRenderCount == expected, "a 1x bitmap does not reuse the real window's different device density",
+                      "builds=\(builds)->\(panel.face.staticDialRenderCount), expected=\(expected)")
+                buildsAfterOffscreen = panel.face.staticDialRenderCount
+                warmOnePixelPerPointCache()
+                check(panel.face.staticDialRenderCount == buildsAfterOffscreen, "repeated identical 1x bitmap targets reuse their static cache")
+                panel.face.invalidateDial()
+            }),
+            (0.5, {
+                capture("15-live-after-second-1x")
+                let difference = maximumComponentDifference(images["14-fresh-live-reference"], images["15-live-after-second-1x"])
+                check(difference <= 1, "a second offscreen/live round trip preserves sharp static pixels",
+                      "maximum component difference=\(difference)/255")
+                let expected = buildsAfterOffscreen + (panel.backingScaleFactor == 1 ? 0 : 1)
+                check(panel.face.staticDialRenderCount == expected, "the second return to the live window rebuilds only for its actual density",
+                      "builds=\(buildsAfterOffscreen)->\(panel.face.staticDialRenderCount), expected=\(expected)")
+                buildsAfterLive = panel.face.staticDialRenderCount
+            }),
+            (0.5, {
+                panel.face.invalidateDial()
+                panel.displayIfNeeded()
+                check(panel.face.staticDialRenderCount == buildsAfterLive, "unchanged real-window redraws reuse the density-correct cache")
             })
         ]
         func finish() -> Never {

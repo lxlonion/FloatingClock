@@ -668,6 +668,7 @@ enum RuntimeChecks {
         checkSizeHoverAndOpacity(check)
         checkVisualPolish(check)
         checkSnapshotGroupOpacity(check)
+        DialCacheChecks.run(check)
         checkTimeZoneRendering(check)
         let result: [String: Any] = ["passed": failures.isEmpty, "count": checks.count, "checks": checks, "failures": failures]
         let data = try! JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])

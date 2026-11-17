@@ -26,6 +26,23 @@ final class ClockFaceView: NSView {
     var cardCornerRadius: CGFloat { min(CardGeometry.outerRadius, max(0, min(bounds.width, bounds.height) / 2 - ClockLayout.padding)) }
     var quickAccessCorner: ClockCorner? { didSet { if oldValue != quickAccessCorner { invalidateDial() } } }
     private var minutePathCache: (minute: String, card: CGRect, size: Double, path: CGPath)?
+    private struct StaticDialKey: Equatable {
+        let card: CGRect
+        let rasterRect: CGRect
+        let style: ClockStyle
+        let dark: Bool
+        let day: String?
+        let weekday: String?
+        let minute: String?
+        let minuteSize: Double?
+        let minuteAlpha: Double?
+        let pixelSize: CGSize
+        let colorSpace: CGColorSpace?
+    }
+    // One entry per face: resizing or changing settings replaces the old layer
+    // rather than retaining every size, date and minute ever displayed.
+    private var staticDialCache: (key: StaticDialKey, layer: CGLayer)?
+    private(set) var staticDialRenderCount = 0
     private var hoverTracking: NSTrackingArea?
     private var dragStart: (pointer: CGPoint, dial: CGRect)?
     private let background = CardBackgroundView()
@@ -172,16 +189,103 @@ final class ClockFaceView: NSView {
 
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); updateCard(); invalidateDial() }
 
-    fileprivate func drawDial(_ dirtyRect: NSRect) {
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        staticDialCache = nil
+        invalidateDial()
+    }
+
+    // The uncached path is also used by native rendering checks as a pixel reference.
+    func drawDial(_ dirtyRect: NSRect, usesStaticCache: Bool = true) {
         NSColor.clear.setFill()
         dirtyRect.fill(using: .copy)
 
         let card = dialCard
+        guard card.width > 0, card.height > 0 else { return }
         let scale = card.width / 224
         let center = CGPoint(x: card.midX, y: card.midY)
         let palette = ClockPalette(settings.appearance, effectiveAppearance: effectiveAppearance)
         let ink = palette.ink
         let accent = palette.accent
+        let now = fixedDate ?? Date()
+        let calendar = settings.calendar(at: now)
+        let readout = ClockReadout(date: now, calendar: calendar)
+
+        if usesStaticCache, let context = NSGraphicsContext.current?.cgContext {
+            drawCachedStaticDial(in: context, card: card, palette: palette, readout: readout)
+        } else {
+            drawStaticDial(card: card, palette: palette, readout: readout)
+        }
+
+        let angles = ClockAngles(date: now, calendar: calendar)
+        let halo = Self.haloStrength(settings: settings)
+        if halo > 0 {
+            let color = palette.face.withAlphaComponent(halo)
+            stroke(from: point(center, -8 * scale, angles.hour), to: point(center, 53 * scale, angles.hour), width: 9 * scale, color: color)
+            stroke(from: point(center, -10 * scale, angles.minute), to: point(center, 77 * scale, angles.minute), width: 7 * scale, color: color)
+            if settings.showsSeconds {
+                stroke(from: point(center, -19 * scale, angles.second), to: point(center, 82 * scale, angles.second), width: 4.5 * scale, color: color)
+            }
+        }
+        stroke(from: point(center, -8 * scale, angles.hour), to: point(center, 53 * scale, angles.hour), width: 6 * scale, color: ink)
+        stroke(from: point(center, -10 * scale, angles.minute), to: point(center, 77 * scale, angles.minute), width: 4 * scale, color: ink)
+        if settings.showsSeconds {
+            stroke(from: point(center, -19 * scale, angles.second), to: point(center, 82 * scale, angles.second), width: 1.5 * scale, color: accent)
+        }
+        let hubRadius: CGFloat = (settings.showsSeconds ? 4 : 3.5) * scale
+        (settings.showsSeconds ? accent : ink).setFill()
+        NSBezierPath(ovalIn: CGRect(x: center.x - hubRadius, y: center.y - hubRadius, width: 2 * hubRadius, height: 2 * hubRadius)).fill()
+    }
+
+    private func drawCachedStaticDial(in context: CGContext, card: CGRect, palette: ClockPalette, readout: ClockReadout) {
+        let transform = context.ctm
+        // Keep AppKit's original text orientation and rasterization for uncommon
+        // flipped/rotated targets. The live dial is unflipped and uses the cache.
+        guard transform.b == 0, transform.c == 0, NSGraphicsContext.current?.isFlipped != true else {
+            drawStaticDial(card: card, palette: palette, readout: readout)
+            return
+        }
+        // Align the cache to destination pixels, including fractional card origins
+        // and cropped snapshots. Never resample a 1x cache onto a 2x display.
+        let pixelRect = context.convertToDeviceSpace(card).integral
+        let rasterRect = context.convertToUserSpace(pixelRect)
+        let key = StaticDialKey(card: card, rasterRect: rasterRect, style: settings.style, dark: palette.dark,
+                                day: settings.showsDate && quickAccessCorner != .bottomLeft ? readout.day : nil,
+                                weekday: settings.showsDate && quickAccessCorner != .bottomRight ? readout.weekday : nil,
+                                minute: settings.showsMinuteNumerals ? readout.minute : nil,
+                                minuteSize: settings.showsMinuteNumerals ? settings.minuteNumeralSize : nil,
+                                minuteAlpha: settings.showsMinuteNumerals ? settings.minuteNumeralAlpha : nil,
+                                // A window's default device transform may carry
+                                // Retina scaling that is absent from its CTM.
+                                pixelSize: pixelRect.size,
+                                colorSpace: context.colorSpace ?? window?.colorSpace?.cgColorSpace)
+        if staticDialCache?.key != key {
+            staticDialCache = nil
+            // Size the layer in device pixels, then restore point coordinates.
+            let pixelSize = key.pixelSize
+            if let layer = CGLayer(context, size: pixelSize, auxiliaryInfo: nil), let layerContext = layer.context {
+                layerContext.scaleBy(x: pixelSize.width / rasterRect.width, y: pixelSize.height / rasterRect.height)
+                layerContext.translateBy(x: -rasterRect.minX, y: -rasterRect.minY)
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = NSGraphicsContext(cgContext: layerContext, flipped: false)
+                drawStaticDial(card: card, palette: palette, readout: readout)
+                NSGraphicsContext.restoreGraphicsState()
+                staticDialCache = (key, layer)
+                staticDialRenderCount += 1
+            }
+        }
+        if let cache = staticDialCache {
+            context.draw(cache.layer, in: cache.key.rasterRect)
+        } else {
+            // Allocation failure must not make the dial disappear.
+            drawStaticDial(card: card, palette: palette, readout: readout)
+        }
+    }
+
+    private func drawStaticDial(card: CGRect, palette: ClockPalette, readout: ClockReadout) {
+        let scale = card.width / 224
+        let center = CGPoint(x: card.midX, y: card.midY)
+        let ink = palette.ink
 
         for index in 0..<60 {
             if settings.style == .cardinalNumbers && [0, 1, 14].contains(index % 15) { continue }
@@ -201,9 +305,6 @@ final class ClockFaceView: NSView {
             }
         }
 
-        let now = fixedDate ?? Date()
-        let calendar = settings.calendar(at: now)
-        let readout = ClockReadout(date: now, calendar: calendar)
         if settings.showsDate {
             let baseline = card.minY + 16 * scale
             let color = ink.withAlphaComponent(0.54)
@@ -234,25 +335,6 @@ final class ClockFaceView: NSView {
                 context.fillPath()
             }
         }
-
-        let angles = ClockAngles(date: now, calendar: calendar)
-        let halo = Self.haloStrength(settings: settings)
-        if halo > 0 {
-            let color = palette.face.withAlphaComponent(halo)
-            stroke(from: point(center, -8 * scale, angles.hour), to: point(center, 53 * scale, angles.hour), width: 9 * scale, color: color)
-            stroke(from: point(center, -10 * scale, angles.minute), to: point(center, 77 * scale, angles.minute), width: 7 * scale, color: color)
-            if settings.showsSeconds {
-                stroke(from: point(center, -19 * scale, angles.second), to: point(center, 82 * scale, angles.second), width: 4.5 * scale, color: color)
-            }
-        }
-        stroke(from: point(center, -8 * scale, angles.hour), to: point(center, 53 * scale, angles.hour), width: 6 * scale, color: ink)
-        stroke(from: point(center, -10 * scale, angles.minute), to: point(center, 77 * scale, angles.minute), width: 4 * scale, color: ink)
-        if settings.showsSeconds {
-            stroke(from: point(center, -19 * scale, angles.second), to: point(center, 82 * scale, angles.second), width: 1.5 * scale, color: accent)
-        }
-        let hubRadius: CGFloat = (settings.showsSeconds ? 4 : 3.5) * scale
-        (settings.showsSeconds ? accent : ink).setFill()
-        NSBezierPath(ovalIn: CGRect(x: center.x - hubRadius, y: center.y - hubRadius, width: 2 * hubRadius, height: 2 * hubRadius)).fill()
     }
 
     static func haloStrength(settings: ClockSettings) -> CGFloat {
