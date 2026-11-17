@@ -34,6 +34,9 @@ public struct ClockSettings: Codable, Equatable {
     public var showsSeconds = true
     public var showsDate = true
     public var timerDisplayFormat: TimerDisplayFormat = .totalMinutes
+    public var selectedClockSlot: ClockSlot = .system
+    public var secondClockTimeZone: ClockTimeZoneSettings = .pacific
+    public var thirdClockTimeZone: ClockTimeZoneSettings = .newYork
     public var origin: StoredPoint?
 
     public init() {}
@@ -41,6 +44,7 @@ public struct ClockSettings: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case transparency, faceSize, appearance, style, showsMinuteNumerals, minuteNumeralOpacity, minuteNumeralSize
         case isLocked, showsSeconds, showsDate, timerDisplayFormat, origin
+        case selectedClockSlot, secondClockTimeZone, thirdClockTimeZone
     }
 
     public init(from decoder: Decoder) throws {
@@ -59,7 +63,30 @@ public struct ClockSettings: Codable, Equatable {
         showsSeconds = try values.decodeIfPresent(Bool.self, forKey: .showsSeconds) ?? showsSeconds
         showsDate = try values.decodeIfPresent(Bool.self, forKey: .showsDate) ?? showsDate
         timerDisplayFormat = (try? values.decode(TimerDisplayFormat.self, forKey: .timerDisplayFormat)) ?? timerDisplayFormat
+        selectedClockSlot = (try? values.decode(ClockSlot.self, forKey: .selectedClockSlot)) ?? selectedClockSlot
+        secondClockTimeZone = (try? values.decode(ClockTimeZoneSettings.self, forKey: .secondClockTimeZone)) ?? secondClockTimeZone
+        thirdClockTimeZone = (try? values.decode(ClockTimeZoneSettings.self, forKey: .thirdClockTimeZone)) ?? thirdClockTimeZone
         origin = try values.decodeIfPresent(StoredPoint.self, forKey: .origin)
+    }
+
+    public func title(for slot: ClockSlot) -> String {
+        let name: String
+        switch slot {
+        case .system: name = "系统时区"
+        case .second: name = secondClockTimeZone.displayName
+        case .third: name = thirdClockTimeZone.displayName
+        }
+        return "\(slot.title) · \(name)"
+    }
+
+    public func calendar(at date: Date, systemCalendar: Calendar = .autoupdatingCurrent) -> Calendar {
+        var calendar = systemCalendar
+        switch selectedClockSlot {
+        case .system: break
+        case .second: calendar.timeZone = secondClockTimeZone.timeZone(at: date)
+        case .third: calendar.timeZone = thirdClockTimeZone.timeZone(at: date)
+        }
+        return calendar
     }
 
     public var backgroundAlpha: Double { 1 - normalized().transparency / 100 }
@@ -78,6 +105,8 @@ public struct ClockSettings: Codable, Equatable {
         result.faceSize = faceSize.isFinite ? min(Double(ClockLayout.maximumFaceSize), max(Double(ClockLayout.minimumFaceSize), faceSize)) : Double(ClockLayout.minimumFaceSize)
         result.minuteNumeralOpacity = minuteNumeralOpacity.isFinite ? min(100, max(0, minuteNumeralOpacity.rounded())) : 40
         result.minuteNumeralSize = minuteNumeralSize.isFinite ? min(100, max(40, minuteNumeralSize.rounded())) : 100
+        result.secondClockTimeZone = secondClockTimeZone.normalized(fallback: .pacific)
+        result.thirdClockTimeZone = thirdClockTimeZone.normalized(fallback: .newYork)
         if let origin, !origin.x.isFinite || !origin.y.isFinite { result.origin = nil }
         return result
     }

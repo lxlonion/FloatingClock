@@ -78,6 +78,67 @@ final class SettingsSliderRow: NSView {
     }
 }
 
+final class ClockTimeZoneRow: NSView {
+    let timeZonePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    let daylightSavingButton = NSButton(checkboxWithTitle: "自动应用夏令时", target: nil, action: nil)
+    var onChange: ((ClockTimeZoneSettings) -> Void)?
+
+    init(slot: ClockSlot) {
+        super.init(frame: .zero)
+        let common = ["America/Los_Angeles", "America/New_York", "Asia/Shanghai", "Asia/Tokyo", "Europe/London", "UTC"]
+        let identifiers = common + TimeZone.knownTimeZoneIdentifiers.filter { !common.contains($0) }.sorted()
+        for identifier in identifiers { addTimeZone(identifier) }
+        timeZonePopup.target = self
+        timeZonePopup.action = #selector(changed)
+        timeZonePopup.setAccessibilityLabel("\(slot.title)时区")
+        timeZonePopup.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        (timeZonePopup.cell as? NSPopUpButtonCell)?.lineBreakMode = .byTruncatingMiddle
+        daylightSavingButton.target = self
+        daylightSavingButton.action = #selector(changed)
+        daylightSavingButton.setAccessibilityLabel("\(slot.title)自动应用夏令时")
+        daylightSavingButton.toolTip = "勾选后按所选地区的规则自动切换夏令时；不勾选则全年使用标准时间。没有夏令时的地区不受影响。"
+        let label = NSTextField(labelWithString: slot.title)
+        label.widthAnchor.constraint(equalToConstant: 64).isActive = true
+        let choice = NSStackView(views: [label, timeZonePopup])
+        choice.orientation = .horizontal
+        choice.alignment = .centerY
+        choice.spacing = 12
+        let layout = NSStackView(views: [choice, daylightSavingButton])
+        layout.orientation = .vertical
+        layout.alignment = .leading
+        layout.spacing = 6
+        layout.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(layout)
+        NSLayoutConstraint.activate([
+            layout.topAnchor.constraint(equalTo: topAnchor),
+            layout.bottomAnchor.constraint(equalTo: bottomAnchor),
+            layout.leadingAnchor.constraint(equalTo: leadingAnchor),
+            layout.trailingAnchor.constraint(equalTo: trailingAnchor),
+            choice.widthAnchor.constraint(equalTo: layout.widthAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    private func addTimeZone(_ identifier: String) {
+        timeZonePopup.addItem(withTitle: ClockTimeZoneSettings.selectionTitle(for: identifier))
+        timeZonePopup.lastItem?.representedObject = identifier
+    }
+
+    func update(_ settings: ClockTimeZoneSettings) {
+        if !timeZonePopup.itemArray.contains(where: { $0.representedObject as? String == settings.identifier }) {
+            addTimeZone(settings.identifier)
+        }
+        timeZonePopup.select(timeZonePopup.itemArray.first { $0.representedObject as? String == settings.identifier })
+        daylightSavingButton.state = settings.usesDaylightSavingTime ? .on : .off
+    }
+
+    @objc private func changed() {
+        guard let identifier = timeZonePopup.selectedItem?.representedObject as? String else { return }
+        onChange?(ClockTimeZoneSettings(identifier: identifier, usesDaylightSavingTime: daylightSavingButton.state == .on))
+    }
+}
+
 final class AdvancedSettingsWindowController: NSWindowController {
     let settingsScrollView = NSScrollView()
     let lockButton = NSButton(checkboxWithTitle: "锁定位置（鼠标穿透）", target: nil, action: nil)
@@ -86,6 +147,9 @@ final class AdvancedSettingsWindowController: NSWindowController {
     let stylePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     let appearancePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     let timerFormatPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    let clockSlotPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    let secondTimeZoneRow = ClockTimeZoneRow(slot: .second)
+    let thirdTimeZoneRow = ClockTimeZoneRow(slot: .third)
     let secondsButton = NSButton(checkboxWithTitle: "显示秒针", target: nil, action: nil)
     let dateButton = NSButton(checkboxWithTitle: "显示日期与星期", target: nil, action: nil)
     let minuteNumeralsButton = NSButton(checkboxWithTitle: "显示分钟大字", target: nil, action: nil)
@@ -147,6 +211,22 @@ final class AdvancedSettingsWindowController: NSWindowController {
         visibilityRow.alignment = .centerY
         let general = stack([heading("常规"), transparencyRow, lockButton, visibilityRow])
 
+        clockSlotPopup.addItems(withTitles: ClockSlot.allCases.map { settings.title(for: $0) })
+        clockSlotPopup.target = self
+        clockSlotPopup.action = #selector(clockSlotChanged)
+        clockSlotPopup.setAccessibilityLabel("当前时钟槽位")
+        clockSlotPopup.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        (clockSlotPopup.cell as? NSPopUpButtonCell)?.lineBreakMode = .byTruncatingMiddle
+        secondTimeZoneRow.onChange = { [weak self] value in self?.change { $0.secondClockTimeZone = value } }
+        thirdTimeZoneRow.onChange = { [weak self] value in self?.change { $0.thirdClockTimeZone = value } }
+        let timeZones = stack([
+            heading("时钟槽位与时区"),
+            choiceRow("当前槽位", control: clockSlotPopup),
+            note("槽位 1 · 系统时区，自动跟随 macOS。"),
+            secondTimeZoneRow, thirdTimeZoneRow,
+            note("勾选夏令时：按地区规则自动切换；不勾选：全年标准时间。")
+        ])
+
         stylePopup.addItems(withTitles: ClockStyle.allCases.map(\.menuTitle))
         stylePopup.target = self
         stylePopup.action = #selector(styleChanged)
@@ -185,14 +265,15 @@ final class AdvancedSettingsWindowController: NSWindowController {
         let timers = stack([
             heading("计时"), choiceRow("显示格式", control: timerFormatPopup),
             note("解锁后移入时钟，点击赤陶色计时按钮添加；最多三组。"),
-            note("＋ 倒计时 / 到点提醒；− 累计计时。时长可超过 60 分钟。")
+            note("＋ 倒计时 / 到点提醒；− 累计计时。时长可超过 60 分钟。"),
+            note("到点提醒使用系统时区，切换时钟槽位不影响已有计时。")
         ])
         let done = NSButton(title: "完成", target: self, action: #selector(closeSettings))
         done.bezelStyle = .rounded
         done.keyEquivalent = "\r"
         let footer = NSStackView(views: [NSView(), done])
         footer.orientation = .horizontal
-        let form = stack([general, separator(), dial, separator(), details, separator(), minutes, separator(), timers], spacing: 16)
+        let form = stack([general, separator(), timeZones, separator(), dial, separator(), details, separator(), minutes, separator(), timers], spacing: 16)
         form.translatesAutoresizingMaskIntoConstraints = false
         let document = SettingsDocumentView(frame: CGRect(x: 0, y: 0, width: 452, height: 0))
         document.translatesAutoresizingMaskIntoConstraints = false
@@ -277,6 +358,12 @@ final class AdvancedSettingsWindowController: NSWindowController {
         transparencyRow.update(settings.transparency)
         lockButton.state = settings.isLocked ? .on : .off
         visibilityButton.state = clockIsVisible ? .on : .off
+        for (index, slot) in ClockSlot.allCases.enumerated() {
+            clockSlotPopup.item(at: index)?.title = settings.title(for: slot)
+        }
+        clockSlotPopup.selectItem(at: ClockSlot.allCases.firstIndex(of: settings.selectedClockSlot) ?? 0)
+        secondTimeZoneRow.update(settings.secondClockTimeZone)
+        thirdTimeZoneRow.update(settings.thirdClockTimeZone)
         stylePopup.selectItem(at: ClockStyle.allCases.firstIndex(of: settings.style) ?? 0)
         appearancePopup.selectItem(at: ClockAppearance.allCases.firstIndex(of: settings.appearance) ?? 0)
         timerFormatPopup.selectItem(at: TimerDisplayFormat.allCases.firstIndex(of: settings.timerDisplayFormat) ?? 0)
@@ -298,6 +385,7 @@ final class AdvancedSettingsWindowController: NSWindowController {
     }
 
     @objc private func styleChanged() { change { $0.style = ClockStyle.allCases[stylePopup.indexOfSelectedItem] } }
+    @objc private func clockSlotChanged() { change { $0.selectedClockSlot = ClockSlot.allCases[clockSlotPopup.indexOfSelectedItem] } }
     @objc private func appearanceChanged() { change { $0.appearance = ClockAppearance.allCases[appearancePopup.indexOfSelectedItem] } }
     @objc private func timerFormatChanged() { change { $0.timerDisplayFormat = TimerDisplayFormat.allCases[timerFormatPopup.indexOfSelectedItem] } }
     @objc private func secondsChanged() { change { $0.showsSeconds = secondsButton.state == .on } }

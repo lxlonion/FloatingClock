@@ -202,7 +202,8 @@ final class ClockFaceView: NSView {
         }
 
         let now = fixedDate ?? Date()
-        let readout = ClockReadout(date: now)
+        let calendar = settings.calendar(at: now)
+        let readout = ClockReadout(date: now, calendar: calendar)
         if settings.showsDate {
             let baseline = card.minY + 16 * scale
             let color = ink.withAlphaComponent(0.54)
@@ -234,7 +235,7 @@ final class ClockFaceView: NSView {
             }
         }
 
-        let angles = ClockAngles(date: now)
+        let angles = ClockAngles(date: now, calendar: calendar)
         let halo = Self.haloStrength(settings: settings)
         if halo > 0 {
             let color = palette.face.withAlphaComponent(halo)

@@ -152,8 +152,47 @@ enum LiveDisplayChecks {
                 capture("10-ticker-after")
                 let changed = differences(images["09-ticker-before"], images["10-ticker-after"], in: dialRect)
                 check(changed > 10, "ticker updates the live second hand", "changed pixels=\(changed)")
-                settings.transparency = 90
                 settings.showsSeconds = false
+                settings.selectedClockSlot = .second
+                panel.face.fixedDate = ISO8601DateFormatter().date(from: "2026-07-15T04:20:00Z")!
+                panel.apply(settings)
+            }),
+            (0.5, {
+                capture("10a-pacific-standard")
+                settings.selectedClockSlot = .third
+                panel.apply(settings)
+            }),
+            (0.5, {
+                capture("10b-new-york-dst")
+                let hands = differences(images["10a-pacific-standard"], images["10b-new-york-dst"], in: dialRect)
+                let day = differences(images["10a-pacific-standard"], images["10b-new-york-dst"], in: dayRect)
+                check(hands > 50 && day > 10, "slot switching redraws live hands and cross-midnight date before any cache",
+                      "hand pixels=\(hands), date pixels=\(day)")
+                settings.thirdClockTimeZone.usesDaylightSavingTime = false
+                panel.apply(settings)
+            }),
+            (0.5, {
+                capture("10c-new-york-standard")
+                let hands = differences(images["10b-new-york-dst"], images["10c-new-york-standard"], in: dialRect)
+                let day = differences(images["10b-new-york-dst"], images["10c-new-york-standard"], in: dayRect)
+                check(hands > 50 && day > 10, "DST checkbox redraws live hands and date before any cache",
+                      "hand pixels=\(hands), date pixels=\(day)")
+                settings.showsMinuteNumerals = true
+                settings.thirdClockTimeZone.identifier = "Asia/Kathmandu"
+                panel.apply(settings)
+            }),
+            (0.5, {
+                capture("10d-kathmandu")
+                settings.thirdClockTimeZone.identifier = "Asia/Shanghai"
+                panel.apply(settings)
+            }),
+            (0.5, {
+                capture("10e-shanghai")
+                let changed = differences(images["10d-kathmandu"], images["10e-shanghai"], in: dialRect)
+                check(changed > 300, "fractional time zone switching refreshes live minute numerals before any cache", "changed pixels=\(changed)")
+                settings.selectedClockSlot = .system
+                settings.showsMinuteNumerals = false
+                settings.transparency = 90
                 panel.face.fixedDate = six
                 panel.apply(settings)
             }),

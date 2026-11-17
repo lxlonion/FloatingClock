@@ -82,8 +82,8 @@ enum RuntimeChecks {
         } else { check(false, "lock menu exists") }
 
         check(controller.menu.items.allSatisfy { $0.submenu == nil }, "compact menu has no secondary submenus")
-        check(controller.menu.items.filter { $0.action != nil }.count == 5,
-              "compact menu retains only lock, visibility, advanced settings, screen recovery, and quit")
+        check(controller.menu.items.filter { $0.action != nil }.count == 8,
+              "compact menu includes three clock slots and the five existing actions")
         if let index = controller.menu.items.firstIndex(where: { $0.title == "高级设置…" }) {
             controller.menu.performActionForItem(at: index)
             check(advanced.window?.isVisible == true && advanced.window?.canBecomeKey == true,
@@ -101,6 +101,54 @@ enum RuntimeChecks {
         let scroll = advanced.settingsScrollView
         check(abs((scroll.documentView?.frame.width ?? 0) - scroll.contentView.bounds.width) < 1,
               "settings scroll content fits the viewport without clipping controls on the right")
+
+        check(controller.clockSlotItems.count == 3 && advanced.clockSlotPopup.numberOfItems == 3 &&
+              controller.clockSlotItems.map(\.state) == [.on, .off, .off],
+              "three clock slots default to the system slot in the menu and advanced settings")
+        check(advanced.secondTimeZoneRow.daylightSavingButton.state == .off && advanced.thirdTimeZoneRow.daylightSavingButton.state == .on,
+              "Pacific standard time disables DST by default while New York enables automatic DST")
+        for (index, slot) in ClockSlot.allCases.enumerated() {
+            if let menuIndex = controller.menu.items.firstIndex(of: controller.clockSlotItems[index]) {
+                controller.menu.performActionForItem(at: menuIndex)
+                check(panel.face.settings.selectedClockSlot == slot && store.load().selectedClockSlot == slot &&
+                      advanced.clockSlotPopup.indexOfSelectedItem == index && controller.clockSlotItems.filter { $0.state == .on }.count == 1,
+                      "\(slot.rawValue) menu slot selection updates the face, preferences and advanced settings")
+            } else { check(false, "\(slot.rawValue) slot menu item exists") }
+        }
+        advanced.clockSlotPopup.selectItem(at: 1)
+        _ = advanced.clockSlotPopup.sendAction(advanced.clockSlotPopup.action, to: advanced.clockSlotPopup.target)
+        check(panel.face.settings.selectedClockSlot == .second && controller.clockSlotItems[1].state == .on && store.load().selectedClockSlot == .second,
+              "advanced slot selection synchronizes the face, menu checkmark and persistence")
+        advanced.secondTimeZoneRow.daylightSavingButton.performClick(nil)
+        check(panel.face.settings.secondClockTimeZone.usesDaylightSavingTime && store.load().secondClockTimeZone.usesDaylightSavingTime &&
+              controller.clockSlotItems[1].title.contains("太平洋时间") && advanced.thirdTimeZoneRow.daylightSavingButton.state == .on,
+              "enabling Pacific DST updates the clock and menu title without changing the third slot")
+        advanced.thirdTimeZoneRow.daylightSavingButton.performClick(nil)
+        check(!store.load().thirdClockTimeZone.usesDaylightSavingTime && panel.face.settings.secondClockTimeZone.usesDaylightSavingTime &&
+              controller.clockSlotItems[2].title.contains("纽约标准时间"),
+              "New York DST can be disabled independently and updates its menu title")
+        let zonePopup = advanced.secondTimeZoneRow.timeZonePopup
+        zonePopup.select(zonePopup.itemArray.first { $0.representedObject as? String == "Asia/Kathmandu" })
+        _ = zonePopup.sendAction(zonePopup.action, to: zonePopup.target)
+        check(store.load().secondClockTimeZone.identifier == "Asia/Kathmandu" && panel.face.settings.secondClockTimeZone.identifier == "Asia/Kathmandu" &&
+              controller.clockSlotItems[1].title.contains("Asia/Kathmandu") && advanced.clockSlotPopup.titleOfSelectedItem?.contains("Asia/Kathmandu") == true,
+              "custom IANA time zone selection updates the face, persistence and both slot labels")
+        advanced.close()
+        advanced.showSettings()
+        check(advanced.secondTimeZoneRow.timeZonePopup.selectedItem?.representedObject as? String == "Asia/Kathmandu" &&
+              advanced.secondTimeZoneRow.daylightSavingButton.state == .on && advanced.thirdTimeZoneRow.daylightSavingButton.state == .off,
+              "reopening advanced settings preserves independent zone and DST selections")
+        advanced.window?.contentView?.layoutSubtreeIfNeeded()
+        check([advanced.secondTimeZoneRow, advanced.thirdTimeZoneRow].allSatisfy { row in
+            let popup = row.convert(row.timeZonePopup.bounds, from: row.timeZonePopup)
+            return row.bounds.width <= scroll.contentView.bounds.width && popup.minX >= 0 && popup.maxX <= row.bounds.maxX
+        }, "long time zone names fit the settings viewport without widening or clipping the controls on the right")
+        var resetSlots = controller.settings
+        resetSlots.selectedClockSlot = .system
+        resetSlots.secondClockTimeZone = .pacific
+        resetSlots.thirdClockTimeZone = .newYork
+        controller.settings = resetSlots
+        controller.onSettingsChanged?(resetSlots)
 
         let advancedTransparency = advanced.transparencyRow.slider
         advancedTransparency.doubleValue = 31
@@ -620,10 +668,43 @@ enum RuntimeChecks {
         checkSizeHoverAndOpacity(check)
         checkVisualPolish(check)
         checkSnapshotGroupOpacity(check)
+        checkTimeZoneRendering(check)
         let result: [String: Any] = ["passed": failures.isEmpty, "count": checks.count, "checks": checks, "failures": failures]
         let data = try! JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
         print(String(data: data, encoding: .utf8)!)
         return failures.isEmpty ? 0 : 1
+    }
+
+    private static func checkTimeZoneRendering(_ check: (Bool, String) -> Void) {
+        var settings = ClockSettings()
+        settings.transparency = 0
+        settings.showsSeconds = false
+        settings.selectedClockSlot = .second
+        let panel = ClockPanel(settings: settings)
+        defer { panel.hideClock() }
+        panel.face.fixedDate = ISO8601DateFormatter().date(from: "2026-07-15T04:20:00Z")!
+        func image() -> Data? {
+            panel.apply(settings)
+            panel.face.layoutSubtreeIfNeeded()
+            let bitmap = panel.face.bitmapImageRepForCachingDisplay(in: panel.face.bounds)!
+            panel.face.cacheDisplay(in: panel.face.bounds, to: bitmap)
+            return bitmap.representation(using: .png, properties: [:])
+        }
+        let pacific = image()
+        settings.selectedClockSlot = .third
+        let newYork = image()
+        check(pacific != nil && newYork != nil && pacific != newYork,
+              "switching from Pacific to New York redraws the real clock hands and midnight date")
+        settings.thirdClockTimeZone.usesDaylightSavingTime = false
+        let standard = image()
+        check(standard != nil && standard != newYork, "disabling New York DST redraws the real hour hand and midnight date")
+        settings.showsMinuteNumerals = true
+        settings.thirdClockTimeZone = ClockTimeZoneSettings(identifier: "Asia/Kathmandu", usesDaylightSavingTime: true)
+        let kathmandu = image()
+        settings.thirdClockTimeZone.identifier = "Asia/Shanghai"
+        let shanghai = image()
+        check(kathmandu != nil && shanghai != nil && kathmandu != shanghai,
+              "fractional-offset time zones redraw the minute hand and invalidate cached minute numerals")
     }
 
     private static func checkSnapshotGroupOpacity(_ check: (Bool, String) -> Void) {

@@ -63,6 +63,7 @@ final class MenuController: NSObject, NSMenuDelegate {
     private let subtitle = NSTextField(labelWithString: "始终置顶 · 拖动表盘移动")
     private var lockItem: NSMenuItem!
     private var visibilityItem: NSMenuItem!
+    private(set) var clockSlotItems: [NSMenuItem] = []
     private var quickItems: [NSMenuItem] = []
     var settings: ClockSettings { didSet { refresh() } }
     var clockIsVisible = true { didSet { refresh() } }
@@ -121,6 +122,13 @@ final class MenuController: NSObject, NSMenuDelegate {
         sliderItem.view = transparencyView
         menu.addItem(sliderItem)
         menu.addItem(.separator())
+        for (index, slot) in ClockSlot.allCases.enumerated() {
+            let item = makeItem(settings.title(for: slot), action: #selector(selectClockSlot(_:)))
+            item.tag = index
+            clockSlotItems.append(item)
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
         lockItem = makeItem("锁定位置（鼠标穿透）", action: #selector(toggleLock))
         menu.addItem(lockItem)
         visibilityItem = makeItem("显示时钟", action: #selector(toggleVisibility))
@@ -148,6 +156,10 @@ final class MenuController: NSObject, NSMenuDelegate {
         transparencyView.update(settings.transparency)
         lockItem.state = settings.isLocked ? .on : .off
         visibilityItem.state = clockIsVisible ? .on : .off
+        for (item, slot) in zip(clockSlotItems, ClockSlot.allCases) {
+            item.title = settings.title(for: slot)
+            item.state = settings.selectedClockSlot == slot ? .on : .off
+        }
         if quickItems.count == 3 {
             for (item, enabled) in zip(quickItems, [settings.isLocked, settings.showsMinuteNumerals, settings.showsSeconds]) {
                 item.state = enabled ? .on : .off
@@ -164,6 +176,10 @@ final class MenuController: NSObject, NSMenuDelegate {
     }
 
     @objc private func toggleLock() { change { $0.isLocked.toggle() } }
+    @objc private func selectClockSlot(_ sender: NSMenuItem) {
+        guard ClockSlot.allCases.indices.contains(sender.tag) else { return }
+        change { $0.selectedClockSlot = ClockSlot.allCases[sender.tag] }
+    }
     @objc private func toggleSeconds() { change { $0.showsSeconds.toggle() } }
     @objc private func toggleMinuteNumerals() { change { $0.showsMinuteNumerals.toggle() } }
     @objc private func showAdvancedSettings() { onShowAdvancedSettings?() }
