@@ -10,6 +10,7 @@ final class ClockFaceView: NSView {
     var onHoverChanged: ((Bool) -> Void)?
     var dialFrame: CGRect? { didSet { needsDisplay = true } }
     var dialCard: CGRect { (dialFrame ?? bounds).insetBy(dx: ClockLayout.padding, dy: ClockLayout.padding) }
+    var cardCornerRadius: CGFloat { min(32, max(0, min(bounds.width, bounds.height) / 2 - ClockLayout.padding)) }
     var quickAccessCorner: ClockCorner? { didSet { if oldValue != quickAccessCorner { needsDisplay = true } } }
     private var minutePathCache: (minute: String, card: CGRect, size: Double, path: CGPath)?
     private var hoverTracking: NSTrackingArea?
@@ -70,28 +71,30 @@ final class ClockFaceView: NSView {
         let card = dialCard
         let scale = card.width / 224
         let center = CGPoint(x: card.midX, y: card.midY)
-        let dark = settings.appearance == .dark ||
-            (settings.appearance == .system && effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
-        let face = dark ? NSColor(calibratedWhite: 0.12, alpha: 1) : NSColor(calibratedRed: 0.975, green: 0.967, blue: 0.945, alpha: 1)
-        let ink = dark ? NSColor(calibratedWhite: 0.94, alpha: 1) : NSColor(calibratedWhite: 0.17, alpha: 1)
-        let accent = dark ? NSColor(calibratedRed: 1, green: 0.53, blue: 0.35, alpha: 1) : NSColor(calibratedRed: 0.79, green: 0.31, blue: 0.18, alpha: 1)
+        let palette = ClockPalette(settings.appearance, effectiveAppearance: effectiveAppearance)
+        let dark = palette.dark
+        let face = palette.face
+        let ink = palette.ink
+        let accent = palette.accent
         let backgroundCard = bounds.insetBy(dx: ClockLayout.padding, dy: ClockLayout.padding)
-        let radius: CGFloat = bounds.height > (dialFrame ?? bounds).height ? 22 : 38 * scale
+        let radius = cardCornerRadius
         let cardPath = NSBezierPath(roundedRect: backgroundCard, xRadius: radius, yRadius: radius)
 
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         context.saveGState()
         context.setAlpha(settings.backgroundAlpha / settings.contentAlpha)
         context.beginTransparencyLayer(auxiliaryInfo: nil)
-        NSGraphicsContext.saveGraphicsState()
-        let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(dark ? 0.25 : 0.13)
-        shadow.shadowBlurRadius = 9 * scale
-        shadow.shadowOffset = NSSize(width: 0, height: -3 * scale)
-        shadow.set()
-        face.setFill()
-        cardPath.fill()
-        NSGraphicsContext.restoreGraphicsState()
+        for (blur, offset, opacity) in [(5.0, -1.0, dark ? 0.16 : 0.08), (2.0, -1.0, dark ? 0.12 : 0.06)] {
+            NSGraphicsContext.saveGraphicsState()
+            let shadow = NSShadow()
+            shadow.shadowColor = NSColor.black.withAlphaComponent(opacity)
+            shadow.shadowBlurRadius = blur
+            shadow.shadowOffset = NSSize(width: 0, height: offset)
+            shadow.set()
+            face.setFill()
+            cardPath.fill()
+            NSGraphicsContext.restoreGraphicsState()
+        }
         (dark ? NSColor.white.withAlphaComponent(0.09) : NSColor.white.withAlphaComponent(0.8)).setStroke()
         cardPath.lineWidth = 1
         cardPath.stroke()

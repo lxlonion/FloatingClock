@@ -4,7 +4,7 @@ import ClockCore
 final class ClockPanel: NSPanel, NSWindowDelegate {
     let face = ClockFaceView()
     let quickAccessPanel = QuickAccessPanel()
-    let recordingButton = QuickAccessButton(title: "", target: nil, action: nil)
+    let addTimerButton = QuickAccessButton(title: "", target: nil, action: nil)
     let timerTray = TimerTrayView(frame: .zero)
     let timerHint = NSTextField(labelWithString: "＋ 倒计时  ·  − 累计时间")
     var timerCoordinator: TimerCoordinator? {
@@ -64,19 +64,19 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
             self.pointerInside = inside
             self.updateQuickAccess()
         }
-        recordingButton.isRecordingEntry = true
-        recordingButton.isBordered = false
-        recordingButton.target = self
-        recordingButton.action = #selector(addTimer)
-        recordingButton.toolTip = "添加倒计时 / 累计计时（最多三组）"
-        recordingButton.setAccessibilityLabel("添加计时，最多三组")
+        addTimerButton.isTimerEntry = true
+        addTimerButton.isBordered = false
+        addTimerButton.target = self
+        addTimerButton.action = #selector(addTimer)
+        addTimerButton.toolTip = "添加倒计时 / 累计计时（最多三组）"
+        addTimerButton.setAccessibilityLabel("添加计时，最多三组")
         face.addSubview(timerTray)
         timerHint.font = .systemFont(ofSize: 10)
         timerHint.textColor = .secondaryLabelColor
         timerHint.alignment = .center
         timerHint.isHidden = true
         face.addSubview(timerHint)
-        face.addSubview(recordingButton)
+        face.addSubview(addTimerButton)
         timerTray.isHidden = true
         delegate = self
         quickAccessPanel.onOpen = { [weak self] view in self?.onQuickMenuRequested?(view) }
@@ -119,7 +119,7 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
             refreshPointerLocation()
         }
         if timerCoordinator?.timers.isEmpty == true { makeFirstResponder(nil); resignKey() }
-        recordingButton.toolTip = (timerCoordinator?.timers.count ?? 0) >= 3 ? "已达三组上限，请先删除一组" : "添加倒计时 / 累计计时（最多三组）"
+        addTimerButton.toolTip = (timerCoordinator?.timers.count ?? 0) >= 3 ? "已达三组上限，请先删除一组" : "添加倒计时 / 累计计时（最多三组）"
         updateQuickAccess()
     }
 
@@ -133,7 +133,7 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
 
     func hideClock() {
         hideQuickAccess()
-        recordingButton.isHidden = true
+        addTimerButton.isHidden = true
         face.quickAccessCorner = nil
         pointerInside = false
         face.setAccessibilityChildren([])
@@ -203,11 +203,11 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         let corner = QuickAccessLayout.corner(for: clockScreenFrame, on: screenFrame)
         let card = face.dialCard
         let buttonFrame = QuickAccessLayout.buttonFrame(in: card, corner: corner)
-        recordingButton.frame = buttonFrame
-        recordingButton.settings = settings
-        recordingButton.faceScale = card.width / 224
-        let showRecording = !settings.isLocked && isVisible && pointerInside
-        recordingButton.isHidden = !showRecording
+        addTimerButton.frame = buttonFrame
+        addTimerButton.settings = settings
+        addTimerButton.faceScale = card.width / 224
+        let showTimerEntry = !settings.isLocked && isVisible && pointerInside
+        addTimerButton.isHidden = !showTimerEntry
         if settings.isLocked && isVisible {
             face.quickAccessCorner = pointerInside ? corner : nil
             quickAccessPanel.button.settings = settings
@@ -224,12 +224,12 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
             quickAccessPanel.button.setAccessibilityParent(pointerInside ? face : nil)
         } else {
             hideQuickAccess()
-            face.quickAccessCorner = showRecording ? corner : nil
+            face.quickAccessCorner = showTimerEntry ? corner : nil
         }
         var children: [Any] = []
         if !timerTray.isHidden { children.append(timerTray) }
         if !timerHint.isHidden { children.append(timerHint) }
-        if showRecording { children.append(recordingButton) }
+        if showTimerEntry { children.append(addTimerButton) }
         if quickAccessPanel.isEntryVisible { children.append(quickAccessPanel.button) }
         face.setAccessibilityChildren(children)
     }

@@ -95,8 +95,9 @@ final class TimerNumberInput: NSView, NSTextFieldDelegate {
         stepper.integerValue = field.integerValue
     }
 
-    func apply(ink: NSColor, dark: Bool) {
-        layer?.backgroundColor = (dark ? NSColor.white.withAlphaComponent(0.055) : NSColor.white.withAlphaComponent(0.7)).cgColor
+    func apply(palette: ClockPalette) {
+        let ink = palette.ink
+        layer?.backgroundColor = palette.inputBackground.cgColor
         layer?.borderColor = ink.withAlphaComponent(0.11).cgColor
         field.textColor = ink
         unitLabel.textColor = ink.withAlphaComponent(0.5)
@@ -159,7 +160,7 @@ final class TimerTimeInput: NSStackView {
     init(kind: ClockTimerInput) {
         self.kind = kind
         hours = TimerNumberInput(unit: "h", maximum: kind == .duration ? 9_999 : 23, minimumDigits: kind == .duration ? 1 : 2, accessibilityLabel: "小时")
-        minutes = TimerNumberInput(unit: "mim", maximum: kind == .duration ? 9_999 : 59, minimumDigits: kind == .duration ? 1 : 2, accessibilityLabel: "分钟")
+        minutes = TimerNumberInput(unit: "min", maximum: kind == .duration ? 9_999 : 59, minimumDigits: kind == .duration ? 1 : 2, accessibilityLabel: "分钟")
         super.init(frame: .zero)
         orientation = .horizontal
         distribution = .fillEqually
@@ -212,9 +213,9 @@ final class TimerTimeInput: NSStackView {
         minutes.update(value: displayedMinutes)
     }
 
-    func apply(ink: NSColor, dark: Bool) {
-        hours.apply(ink: ink, dark: dark)
-        minutes.apply(ink: ink, dark: dark)
+    func apply(palette: ClockPalette) {
+        hours.apply(palette: palette)
+        minutes.apply(palette: palette)
     }
 
     func commit() {

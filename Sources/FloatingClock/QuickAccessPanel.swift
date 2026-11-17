@@ -2,34 +2,32 @@ import AppKit
 import ClockCore
 
 final class QuickAccessButton: NSButton {
+    static let timerSymbolName = "timer"
     var settings = ClockSettings() { didSet { needsDisplay = true } }
     var faceScale: CGFloat = 1 { didSet { needsDisplay = true } }
-    var isRecordingEntry = false { didSet { needsDisplay = true } }
+    var isTimerEntry = false { didSet { needsDisplay = true } }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func rightMouseDown(with event: NSEvent) { performClick(nil) }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
     override func viewDidChangeEffectiveAppearance() { needsDisplay = true }
 
     override func draw(_ dirtyRect: NSRect) {
-        if isRecordingEntry {
+        let palette = ClockPalette(settings.appearance, effectiveAppearance: effectiveAppearance)
+        if isTimerEntry {
             let circle = NSBezierPath(ovalIn: bounds.insetBy(dx: 0.7, dy: 0.7))
-            NSColor.systemRed.withAlphaComponent(isHighlighted ? 0.72 : 1).setFill()
+            palette.accent.withAlphaComponent(isHighlighted ? 0.72 : 1).setFill()
             circle.fill()
-            let camera = CGRect(x: bounds.midX - bounds.width * 0.24, y: bounds.midY - bounds.height * 0.16,
-                                width: bounds.width * 0.32, height: bounds.height * 0.32)
-            NSColor.white.setFill()
-            NSBezierPath(roundedRect: camera, xRadius: 1.4, yRadius: 1.4).fill()
-            let lens = NSBezierPath()
-            lens.move(to: CGPoint(x: camera.maxX + 1, y: camera.midY))
-            lens.line(to: CGPoint(x: bounds.midX + bounds.width * 0.27, y: camera.maxY))
-            lens.line(to: CGPoint(x: bounds.midX + bounds.width * 0.27, y: camera.minY))
-            lens.close(); lens.fill()
+            let configuration = NSImage.SymbolConfiguration(pointSize: bounds.width * 0.52, weight: .semibold)
+                .applying(NSImage.SymbolConfiguration(paletteColors: [palette.onAccent]))
+            if let image = NSImage(systemSymbolName: Self.timerSymbolName, accessibilityDescription: nil)?.withSymbolConfiguration(configuration) {
+                let size = image.size
+                image.draw(in: CGRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2,
+                                      width: size.width, height: size.height))
+            }
             return
         }
-        let dark = settings.appearance == .dark ||
-            (settings.appearance == .system && effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
-        let ink = dark ? NSColor(calibratedWhite: 0.94, alpha: 1) : NSColor(calibratedWhite: 0.17, alpha: 1)
-        let face = dark ? NSColor(calibratedWhite: 0.12, alpha: 1) : NSColor(calibratedRed: 0.975, green: 0.967, blue: 0.945, alpha: 1)
+        let ink = palette.ink
+        let face = palette.face
         let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 5 * faceScale, yRadius: 5 * faceScale)
         face.setFill(); shape.fill()
         ink.withAlphaComponent(isHighlighted ? 0.16 : 0.05).setFill(); shape.fill()

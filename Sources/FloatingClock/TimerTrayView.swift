@@ -173,20 +173,19 @@ final class TimerRowView: NSView {
     }
 
     private func applyAppearance() {
-        let dark = selectedAppearance == .dark ||
-            (selectedAppearance == .system && effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
-        let ink = dark ? NSColor(calibratedWhite: 0.94, alpha: 1) : NSColor(calibratedWhite: 0.17, alpha: 1)
-        layer?.backgroundColor = ink.withAlphaComponent(dark ? 0.055 : 0.035).cgColor
+        let palette = ClockPalette(selectedAppearance, effectiveAppearance: effectiveAppearance)
+        let ink = palette.ink
+        layer?.backgroundColor = ink.withAlphaComponent(palette.dark ? 0.065 : 0.035).cgColor
         layer?.borderColor = ink.withAlphaComponent(0.06).cgColor
-        durationInput.apply(ink: ink, dark: dark)
-        targetInput.apply(ink: ink, dark: dark)
-        signButton.contentTintColor = accentSign ? .systemRed : ink
-        timeField.textColor = accentReadout ? .systemRed : ink
-        primaryButton.contentTintColor = .systemRed
+        durationInput.apply(palette: palette)
+        targetInput.apply(palette: palette)
+        signButton.contentTintColor = accentReadout ? palette.warning : (accentSign ? palette.accent : ink)
+        timeField.textColor = accentReadout ? palette.warning : ink
+        primaryButton.contentTintColor = palette.accent
         kindButton.contentTintColor = ink.withAlphaComponent(0.65)
         resetButton.contentTintColor = ink.withAlphaComponent(0.65)
         deleteButton.contentTintColor = ink.withAlphaComponent(0.5)
-        statusLabel.textColor = hasError ? .systemRed : ink.withAlphaComponent(0.55)
+        statusLabel.textColor = hasError ? palette.error : (accentReadout ? palette.warning : ink.withAlphaComponent(0.55))
         needsDisplay = true
     }
 
@@ -215,6 +214,7 @@ final class TimerRowView: NSView {
 final class TimerTrayView: NSView {
     private static let rowSpacing: CGFloat = 6
     private let notice = NSTextField(labelWithString: "")
+    private var selectedAppearance: ClockAppearance = .light
     private(set) var rows: [TimerRowView] = []
     var coordinator: TimerCoordinator?
 
@@ -225,7 +225,6 @@ final class TimerTrayView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         notice.font = .systemFont(ofSize: 10)
-        notice.textColor = .systemOrange
         notice.lineBreakMode = .byTruncatingTail
         addSubview(notice)
     }
@@ -234,6 +233,8 @@ final class TimerTrayView: NSView {
 
     func refresh(settings: ClockSettings) {
         guard let coordinator else { return }
+        selectedAppearance = settings.appearance
+        applyAppearance()
         if rows.map(\.id) != coordinator.timers.map(\.id) {
             let previousRows = rows
             let existing = Dictionary(uniqueKeysWithValues: previousRows.map { ($0.id, $0) })
@@ -266,6 +267,15 @@ final class TimerTrayView: NSView {
             row.refresh(timer: timer, settings: settings, error: coordinator.errors[timer.id], now: now)
         }
         needsLayout = true
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyAppearance()
+    }
+
+    private func applyAppearance() {
+        notice.textColor = ClockPalette(selectedAppearance, effectiveAppearance: effectiveAppearance).warning
     }
 
     override func layout() {

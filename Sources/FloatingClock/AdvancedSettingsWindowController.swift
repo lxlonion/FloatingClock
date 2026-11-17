@@ -188,7 +188,7 @@ final class AdvancedSettingsWindowController: NSWindowController {
         timerFormatPopup.setAccessibilityLabel("计时显示格式")
         let timers = stack([
             heading("计时"), choiceRow("显示格式", control: timerFormatPopup),
-            note("解锁后移入时钟，点击红色按钮添加；最多三组。"),
+            note("解锁后移入时钟，点击赤陶色计时按钮添加；最多三组。"),
             note("＋ 倒计时 / 到点提醒；− 累计计时。时长可超过 60 分钟。")
         ])
         let done = NSButton(title: "完成", target: self, action: #selector(closeSettings))

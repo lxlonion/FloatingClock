@@ -271,24 +271,24 @@ enum RuntimeChecks {
         timerPanel.showClock()
         defer { timerPanel.hideClock() }
         timerPanel.face.onHoverChanged?(false)
-        check(timerPanel.recordingButton.isHidden && !timerPanel.quickAccessPanel.isEntryVisible,
+        check(timerPanel.addTimerButton.isHidden && !timerPanel.quickAccessPanel.isEntryVisible,
               "unlocked idle clock hides both entries outside its hover area")
         timerPanel.face.onHoverChanged?(true)
-        check(!timerPanel.recordingButton.isHidden && !timerPanel.quickAccessPanel.isEntryVisible,
-              "hovering unlocked clock shows only the red recording entry")
-        timerPanel.recordingButton.performClick(nil)
+        check(!timerPanel.addTimerButton.isHidden && !timerPanel.quickAccessPanel.isEntryVisible,
+              "hovering unlocked clock shows only the timer entry")
+        timerPanel.addTimerButton.performClick(nil)
         check(timers.timers.count == 1 && timerPanel.timerTray.rows.count == 1 && timerPanel.canBecomeKey,
-              "red entry adds an editable timer and allows keyboard input")
+              "timer entry adds an editable timer and allows keyboard input")
         check(!timerPanel.timerHint.isHidden && timerPanel.timerHint.frame.maxY < timerPanel.timerTray.frame.minY &&
               timerPanel.timerHint.frame.maxY < (timerPanel.face.dialFrame?.minY ?? 0) + ClockLayout.padding,
               "a single timer shows its sign hint at the bottom of the entire window")
-        timerPanel.recordingButton.performClick(nil)
+        timerPanel.addTimerButton.performClick(nil)
         check(timers.timers.count == 2 && timerPanel.timerHint.isHidden,
               "adding a second timer removes the bottom sign hint")
-        timerPanel.recordingButton.performClick(nil)
-        timerPanel.recordingButton.performClick(nil)
+        timerPanel.addTimerButton.performClick(nil)
+        timerPanel.addTimerButton.performClick(nil)
         check(timers.timers.count == 3 && timerPanel.timerTray.rows.count == 3,
-              "red entry enforces a maximum of three timer groups")
+              "timer entry enforces a maximum of three timer groups")
         check(timers.timers.allSatisfy { $0.state == .idle } && scheduler.scheduled.isEmpty,
               "moving focus between new timer inputs does not start timers")
         check(timerPanel.frame.height > timerPanel.frame.width && NSScreen.screens.contains { $0.visibleFrame.contains(timerPanel.frame) },
@@ -354,7 +354,7 @@ enum RuntimeChecks {
         timerPanel.mouseLocationProvider = { lockedPointer }
         timerPanel.apply(locked)
         timerPanel.face.onHoverChanged?(true)
-        check(timerPanel.ignoresMouseEvents && !timerPanel.canBecomeKey && timerPanel.recordingButton.isHidden && timerPanel.quickAccessPanel.isEntryVisible,
+        check(timerPanel.ignoresMouseEvents && !timerPanel.canBecomeKey && timerPanel.addTimerButton.isHidden && timerPanel.quickAccessPanel.isEntryVisible,
               "locking expanded clock keeps only the plus entry and restores pass-through")
         check(timers.timers[0].state == .running && scheduler.scheduled.count == scheduledCount,
               "locking does not stop or duplicate timer notifications")
@@ -362,8 +362,8 @@ enum RuntimeChecks {
         locked.timerDisplayFormat = .hoursMinutes
         timerPanel.apply(locked)
         timerPanel.face.onHoverChanged?(true)
-        check(!timerPanel.recordingButton.isHidden && !timerPanel.quickAccessPanel.isEntryVisible && row.timeField.stringValue.hasPrefix("1时"),
-              "unlocking restores the hover recording entry and the hour-minute readout")
+        check(!timerPanel.addTimerButton.isHidden && !timerPanel.quickAccessPanel.isEntryVisible && row.timeField.stringValue.hasPrefix("1时"),
+              "unlocking restores the hover timer entry and the hour-minute readout")
         row.primaryButton.performClick(nil)
         check(timers.timers[0].state == .paused && scheduler.cancelled.contains(row.id),
               "stop preserves remaining time and cancels its pending notification")
@@ -391,7 +391,7 @@ enum RuntimeChecks {
         check(timers.notificationMessage == "通知未开启", "notification permission failure is surfaced in the timer card")
         timerPanel.hideClock()
         timers.tick(at: started.addingTimeInterval(2))
-        check(timers.timers[0].state == .running && timers.timers[0].isOvertime && !timerPanel.isVisible && timerPanel.recordingButton.isHidden,
+        check(timers.timers[0].state == .running && timers.timers[0].isOvertime && !timerPanel.isVisible && timerPanel.addTimerButton.isHidden,
               "hidden clock crosses zero into overtime without reopening itself")
         let afterCompletion = scheduler.scheduled.count
         timers.tick(at: started.addingTimeInterval(20))
@@ -429,7 +429,7 @@ enum RuntimeChecks {
               "advanced timer format selection updates the clock and persists")
         timerPanel.showClock()
         for deletedIndex in 0..<3 {
-            for _ in 0..<3 { timerPanel.recordingButton.performClick(nil) }
+            for _ in 0..<3 { timerPanel.addTimerButton.performClick(nil) }
             timerPanel.face.layoutSubtreeIfNeeded()
             let removed = timerPanel.timerTray.rows[deletedIndex].id
             timerPanel.timerTray.rows[deletedIndex].deleteButton.performClick(nil)
@@ -445,7 +445,7 @@ enum RuntimeChecks {
                   "deleting row \(deletedIndex + 1) keeps the two remaining row frames separate inside the tray")
             for id in timers.timers.map(\.id) { timers.remove(id) }
         }
-        timerPanel.recordingButton.performClick(nil)
+        timerPanel.addTimerButton.performClick(nil)
         let targetRow = timerPanel.timerTray.rows[0]
         targetRow.kindButton.performClick(nil)
         check(timers.timers[0].inputKind == .targetTime && targetRow.kindButton.image != nil && !targetRow.targetInput.isHidden && targetRow.timeField.isHidden,
@@ -599,6 +599,9 @@ enum RuntimeChecks {
             NSApp.appearance = NSAppearance(named: appearance == .dark ? .aqua : .darkAqua)
             RunLoop.main.run(until: Date().addingTimeInterval(0.03))
             check(rowsMatchPalette(dark: appearance == .dark), "explicit \(appearance.rawValue) appearance remains fixed when inherited appearance changes")
+            check(activeNumber.currentEditor() === editor && editor?.string == editorText && editor?.selectedRange() == editorSelection &&
+                  matchesPalette(editor?.textColor, dark: appearance == .dark) && matchesPalette(editor?.insertionPointColor, dark: appearance == .dark),
+                  "explicit \(appearance.rawValue) updates the active editor and caret without changing text or selection")
         }
         timers.onChange = previousChange
         timerPanel.makeFirstResponder(nil)
@@ -606,10 +609,161 @@ enum RuntimeChecks {
         checkTimerInputRegressions(check)
         checkTimerDragging(check)
         checkSizeHoverAndOpacity(check)
+        checkVisualPolish(check)
         let result: [String: Any] = ["passed": failures.isEmpty, "count": checks.count, "checks": checks, "failures": failures]
         let data = try! JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
         print(String(data: data, encoding: .utf8)!)
         return failures.isEmpty ? 0 : 1
+    }
+
+    private static func checkVisualPolish(_ check: (Bool, String) -> Void) {
+        let suite = "FloatingClock.visual-regressions.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let scheduler = CheckTimerNotifications()
+        let timers = TimerCoordinator(store: ClockTimerStore(defaults: defaults), notifications: scheduler)
+        let panel = ClockPanel(settings: ClockSettings())
+        panel.timerCoordinator = timers
+        timers.onChange = { [weak panel] in panel?.refreshTimers() }
+        let screen = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+        defer { panel.hideClock() }
+
+        func bitmap() -> NSBitmapImageRep {
+            panel.face.layoutSubtreeIfNeeded()
+            let image = panel.face.bitmapImageRepForCachingDisplay(in: panel.face.bounds)!
+            panel.face.cacheDisplay(in: panel.face.bounds, to: image)
+            return image
+        }
+        func edgeAlpha(_ image: NSBitmapImageRep) -> CGFloat {
+            let w = image.pixelsWide, h = image.pixelsHigh
+            let edge = (0..<w).flatMap { [($0, 0), ($0, h - 1)] } + (0..<h).flatMap { [(0, $0), (w - 1, $0)] }
+            return edge.map { image.colorAt(x: $0.0, y: $0.1)?.alphaComponent ?? 1 }.max() ?? 1
+        }
+        func sameColor(_ a: NSColor?, _ b: NSColor) -> Bool {
+            guard let a = a?.usingColorSpace(.sRGB), let b = b.usingColorSpace(.sRGB) else { return false }
+            return abs(a.redComponent - b.redComponent) < 0.01 && abs(a.greenComponent - b.greenComponent) < 0.01 &&
+                abs(a.blueComponent - b.blueComponent) < 0.01
+        }
+
+        for appearance in [ClockAppearance.light, .dark] {
+            for size in [260.0, 300, 420] {
+                for above in [false, true] {
+                    var settings = ClockSettings()
+                    settings.appearance = appearance
+                    settings.faceSize = size
+                    settings.transparency = 0
+                    settings.origin = StoredPoint(x: screen.midX - size / 2,
+                                                  y: above ? screen.minY + 16 : screen.maxY - size - 40)
+                    // A new panel is not needed: move the existing dial to the requested screen quadrant.
+                    panel.setFrameOrigin(CGPoint(x: settings.origin!.x, y: settings.origin!.y))
+                    panel.apply(settings)
+                    let radius = panel.face.cardCornerRadius
+                    let width = panel.frame.width
+                    let plain = bitmap()
+                    let plainEdge = edgeAlpha(plain)
+                    for _ in 0..<3 { _ = timers.add() }
+                    panel.face.layoutSubtreeIfNeeded()
+                    let image = bitmap()
+                    let outer = NSBezierPath(roundedRect: panel.face.bounds.insetBy(dx: ClockLayout.padding, dy: ClockLayout.padding),
+                                             xRadius: radius, yRadius: radius)
+                    let rowsFit = panel.timerTray.rows.allSatisfy { row in
+                        let shape = NSBezierPath(roundedRect: row.bounds.insetBy(dx: 1, dy: 1), xRadius: 13, yRadius: 13)
+                        return stride(from: 0.0, through: row.bounds.width, by: 2).allSatisfy { x in
+                            stride(from: 0.0, through: row.bounds.height, by: 2).allSatisfy { y in
+                                let point = CGPoint(x: x, y: y)
+                                return !shape.contains(point) || outer.contains(row.convert(point, to: panel.face))
+                            }
+                        }
+                    }
+                    let direction = (panel.timerTray.frame.midY > panel.face.dialCard.midY) == above
+                    let expandedRadius = panel.face.cardCornerRadius
+                    for id in timers.timers.map(\.id) { timers.remove(id) }
+                    check(radius == 32 && expandedRadius == radius && panel.face.cardCornerRadius == radius &&
+                          panel.frame.width == width && panel.frame.height == width && direction && rowsFit,
+                          "\(appearance.rawValue) \(Int(size)) \(above ? "above" : "below") keeps one stable rounded card and rows inside it across add/delete")
+                    check(plainEdge <= 1.0 / 255 && edgeAlpha(image) <= 1.0 / 255,
+                          "\(appearance.rawValue) \(Int(size)) \(above ? "above" : "below") actual plain and expanded shadow pixels fade at every window edge")
+                }
+            }
+        }
+        var settings = ClockSettings()
+        settings.transparency = 0
+        panel.apply(settings)
+        panel.face.fixedDate = ISO8601DateFormatter().date(from: "2026-11-14T10:15:36+08:00")
+        panel.face.quickAccessCorner = nil
+        let full = bitmap()
+        let card = panel.face.dialCard
+        func differences(_ a: NSBitmapImageRep, _ b: NSBitmapImageRep, left: Bool) -> Int {
+            let sx = CGFloat(a.pixelsWide) / panel.face.bounds.width
+            let sy = CGFloat(a.pixelsHigh) / panel.face.bounds.height
+            let range = left ? card.minX..<(card.minX + card.width * 0.35) : (card.maxX - card.width * 0.35)..<card.maxX
+            var count = 0
+            for x in Int(range.lowerBound * sx)..<Int(range.upperBound * sx) {
+                for y in Int((panel.face.bounds.height - card.minY - 40) * sy)..<Int((panel.face.bounds.height - card.minY) * sy) {
+                    if a.colorAt(x: x, y: y) != b.colorAt(x: x, y: y) { count += 1 }
+                }
+            }
+            return count
+        }
+        for (corner, left) in [(ClockCorner.bottomLeft, true), (.bottomRight, false)] {
+            panel.face.quickAccessCorner = corner
+            let hidden = bitmap()
+            check(differences(full, hidden, left: left) > 10 && differences(full, hidden, left: !left) == 0,
+                  "\(corner.rawValue) hover hides only its own date text in actual rendered pixels")
+        }
+        panel.face.quickAccessCorner = nil
+        let restored = bitmap()
+        check(differences(full, restored, left: true) == 0 && differences(full, restored, left: false) == 0,
+              "leaving a bottom entry restores both date readouts")
+        var id = timers.add()!
+        var row = panel.timerTray.rows[0]
+        check([row.durationInput, row.targetInput].allSatisfy { input in
+            input.minutes.subviews.compactMap { $0 as? NSTextField }.contains { $0.stringValue == "min" }
+        }, "duration and target-time minute fields both display min")
+        for appearance in [ClockAppearance.light, .dark] {
+            settings.appearance = appearance
+            panel.apply(settings)
+            let palette = ClockPalette(appearance, effectiveAppearance: panel.face.effectiveAppearance)
+            panel.addTimerButton.isHidden = false
+            let entry = bitmap()
+            let entryFrame = panel.addTimerButton.frame
+            let sx = CGFloat(entry.pixelsWide) / panel.face.bounds.width
+            let sy = CGFloat(entry.pixelsHigh) / panel.face.bounds.height
+            var symbolPixels = 0
+            let center = entryFrame.insetBy(dx: entryFrame.width * 0.2, dy: entryFrame.height * 0.2)
+            for x in Int(center.minX * sx)..<Int(center.maxX * sx) {
+                for y in Int((panel.face.bounds.height - center.maxY) * sy)..<Int((panel.face.bounds.height - center.minY) * sy) {
+                    if let color = entry.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
+                       abs(color.redComponent - color.blueComponent) < 0.04,
+                       (appearance == .dark ? color.redComponent < 0.3 : color.redComponent > 0.85) { symbolPixels += 1 }
+                }
+            }
+            check(QuickAccessButton.timerSymbolName == "timer" && NSImage(systemSymbolName: QuickAccessButton.timerSymbolName, accessibilityDescription: nil) != nil && symbolPixels > 3,
+                  "\(appearance.rawValue) add entry actually renders the contrasting timer symbol")
+            check(sameColor(row.signButton.contentTintColor, palette.accent) && sameColor(row.primaryButton.contentTintColor, palette.accent) &&
+                  palette.accent.colorSpace == .sRGB && palette.face.colorSpace == .sRGB,
+                  "\(appearance.rawValue) countdown controls share the explicit sRGB terracotta palette")
+            timers.editInput(id, text: "invalid")
+            timers.primaryAction(id)
+            check(sameColor(row.statusLabel.textColor, palette.error) && !sameColor(row.statusLabel.textColor, palette.warning),
+                  "\(appearance.rawValue) invalid input remains semantic red, distinct from amber")
+            timers.editInput(id, text: "1秒")
+            scheduler.message = "通知未开启"
+            let start = Date()
+            timers.primaryAction(id, at: start)
+            let notice = panel.timerTray.subviews.compactMap { $0 as? NSTextField }.first { $0.stringValue.contains("通知未就绪") }
+            check(notice != nil && sameColor(notice?.textColor, palette.warning),
+                  "\(appearance.rawValue) notification warning uses warm amber")
+            timers.tick(at: start.addingTimeInterval(2))
+            check(sameColor(row.timeField.textColor, palette.warning) && sameColor(row.signButton.contentTintColor, palette.warning) &&
+                  sameColor(row.statusLabel.textColor, palette.warning) && !sameColor(row.timeField.textColor, palette.accent),
+                  "\(appearance.rawValue) overtime uses warm amber rather than the ordinary accent")
+            timers.remove(id)
+            if appearance == .light {
+                id = timers.add()!
+                row = panel.timerTray.rows[0]
+            }
+        }
     }
 
     private static func checkSizeHoverAndOpacity(_ check: (Bool, String) -> Void) {
@@ -661,7 +815,7 @@ enum RuntimeChecks {
             check(abs(background - settings.backgroundAlpha) < 0.02 && abs(hub - settings.contentAlpha) < 0.02,
                   "\(Int(transparency)) percent transparency renders separate background and foreground opacity in actual pixels")
             check(panel.alphaValue == settings.contentAlpha && panel.timerTray.alphaValue == 1 &&
-                  panel.timerHint.alphaValue == 1 && panel.recordingButton.alphaValue == 1,
+                  panel.timerHint.alphaValue == 1 && panel.addTimerButton.alphaValue == 1,
                   "\(Int(transparency)) percent transparency applies the compensated opacity once to timer controls, hint and entry")
         }
         let input = panel.timerTray.rows[0].durationInput.minutes.field
@@ -678,7 +832,7 @@ enum RuntimeChecks {
               "locked clock keeps its entry hidden and date restored outside its hover bounds")
         pointer = CGPoint(x: panel.frame.midX, y: panel.frame.midY)
         RunLoop.main.run(until: Date().addingTimeInterval(0.08))
-        check(panel.quickAccessPanel.isEntryVisible && panel.recordingButton.isHidden && panel.quickAccessPanel.alphaValue == settings.contentAlpha,
+        check(panel.quickAccessPanel.isEntryVisible && panel.addTimerButton.isHidden && panel.quickAccessPanel.alphaValue == settings.contentAlpha,
               "locked entry appears on hover with compensated opacity even when the second hand is off")
         let plus = panel.quickAccessPanel.frame
         check(NSWindow.windowNumber(at: CGPoint(x: plus.midX, y: plus.midY), belowWindowWithWindowNumber: 0) == panel.quickAccessPanel.windowNumber,
@@ -699,8 +853,8 @@ enum RuntimeChecks {
         check(panel.quickAccessPanel.isEntryVisible, "showing the locked clock refreshes its hover location immediately")
         settings.isLocked = false
         panel.apply(settings)
-        check(!panel.recordingButton.isHidden && !panel.quickAccessPanel.isEntryVisible,
-              "unlocking under the pointer swaps the white entry for the red entry immediately")
+        check(!panel.addTimerButton.isHidden && !panel.quickAccessPanel.isEntryVisible,
+              "unlocking under the pointer swaps the white entry for the timer entry immediately")
         timers.remove(id)
     }
 
@@ -750,7 +904,7 @@ enum RuntimeChecks {
                 directionMatches = directionMatches && (panel.timerTray.frame.midY > panel.face.dialCard.midY) == corner.isBottom
                 panel.face.onHoverChanged?(true)
                 entryMatches = entryMatches && panel.face.quickAccessCorner == corner &&
-                    panel.recordingButton.frame == QuickAccessLayout.buttonFrame(in: panel.face.dialCard, corner: corner)
+                    panel.addTimerButton.frame == QuickAccessLayout.buttonFrame(in: panel.face.dialCard, corner: corner)
                 footerStaysAtBottom = footerStaysAtBottom && (count != 1 ||
                     (panel.timerHint.frame.maxY < panel.timerTray.frame.minY && panel.timerHint.frame.maxY < panel.face.dialCard.minY))
             }
@@ -952,7 +1106,7 @@ enum RuntimeChecks {
                     timers.editInput(editable, text: "90")
                     panel.face.fixedDate = ISO8601DateFormatter().date(from: "2026-11-14T10:15:36+08:00")
                     panel.appearance = NSAppearance(named: appearance == .dark ? .darkAqua : .aqua)
-                    panel.recordingButton.isHidden = false
+                    panel.addTimerButton.isHidden = false
                     panel.face.quickAccessCorner = QuickAccessLayout.corner(for: panel.clockScreenFrame, on: screen)
                     panel.face.layoutSubtreeIfNeeded()
                     let view = panel.face
@@ -963,7 +1117,7 @@ enum RuntimeChecks {
                     try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("timers-\(appearance.rawValue)-\(Int(size))-\(side).png"))
                     timers.setInputKind(editable, kind: .targetTime)
                     timers.editInput(editable, text: "19:30")
-                    panel.recordingButton.isHidden = false
+                    panel.addTimerButton.isHidden = false
                     panel.face.layoutSubtreeIfNeeded()
                     let targetBitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
                     panel.appearance?.performAsCurrentDrawingAppearance { view.cacheDisplay(in: view.bounds, to: targetBitmap) }
@@ -975,7 +1129,7 @@ enum RuntimeChecks {
                         panel.makeFirstResponder(panel.timerTray.rows[2].targetInput.minutes.field)
                         panel.timerTray.rows[0].deleteButton.performClick(nil)
                         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
-                        panel.recordingButton.isHidden = false
+                        panel.addTimerButton.isHidden = false
                         panel.face.layoutSubtreeIfNeeded()
                         let reduced = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
                         panel.appearance?.performAsCurrentDrawingAppearance { view.cacheDisplay(in: view.bounds, to: reduced) }
@@ -988,7 +1142,7 @@ enum RuntimeChecks {
                                 timers.setInputKind(added, kind: .targetTime)
                                 timers.editInput(added, text: "19:30")
                             }
-                            panel.recordingButton.isHidden = false
+                            panel.addTimerButton.isHidden = false
                             panel.face.layoutSubtreeIfNeeded()
                             let editors = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
                             panel.appearance?.performAsCurrentDrawingAppearance { view.cacheDisplay(in: view.bounds, to: editors) }
