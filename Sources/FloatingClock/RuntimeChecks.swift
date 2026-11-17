@@ -59,7 +59,7 @@ enum RuntimeChecks {
             syncVisibility()
         }
         var quitRequests = 0
-        advanced.onQuit = { quitRequests += 1 }
+        controller.onQuit = { quitRequests += 1 }
         check(panel.level.rawValue == NSWindow.Level.popUpMenu.rawValue - 1, "above app windows, below system menus")
         check(panel.collectionBehavior.contains([.canJoinAllSpaces, .fullScreenAuxiliary, .canJoinAllApplications]), "all Spaces and fullscreen flags")
         check(!panel.canBecomeKey && !panel.canBecomeMain && !panel.hidesOnDeactivate, "does not steal keyboard focus")
@@ -129,8 +129,17 @@ enum RuntimeChecks {
         check(panel.isVisible && controller.clockIsVisible && advanced.visibilityButton.state == .on &&
               NSScreen.screens.contains { $0.visibleFrame.contains(panel.frame) },
               "advanced screen recovery shows the clock on screen and updates both visibility controls")
-        advanced.quitButton.performClick(nil)
-        check(quitRequests == 1, "advanced settings exposes the app quit action")
+        if let index = controller.menu.items.firstIndex(where: { $0.title == "退出漂浮时钟" }) {
+            controller.menu.performActionForItem(at: index)
+            check(quitRequests == 1, "menu quit invokes its callback without terminating the test")
+        } else { check(false, "menu quit exists") }
+        func labels(_ view: NSView) -> [String] {
+            let own = (view as? NSTextField).map { [$0.stringValue] } ?? (view as? NSButton).map { [$0.title] } ?? []
+            return own + view.subviews.flatMap { labels($0) }
+        }
+        let settingsLabels = advanced.window?.contentView.map { labels($0) } ?? []
+        check(!settingsLabels.contains("高级设置") && !settingsLabels.contains("退出漂浮时钟"),
+              "settings body has no duplicate heading or quit control")
 
         let sizeSlider = advanced.faceSizeRow.slider
         sizeSlider.doubleValue = 284
@@ -610,10 +619,59 @@ enum RuntimeChecks {
         checkTimerDragging(check)
         checkSizeHoverAndOpacity(check)
         checkVisualPolish(check)
+        checkSnapshotGroupOpacity(check)
         let result: [String: Any] = ["passed": failures.isEmpty, "count": checks.count, "checks": checks, "failures": failures]
         let data = try! JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
         print(String(data: data, encoding: .utf8)!)
         return failures.isEmpty ? 0 : 1
+    }
+
+    private static func checkSnapshotGroupOpacity(_ check: (Bool, String) -> Void) {
+        var settings = ClockSettings()
+        settings.transparency = 90
+        let panel = ClockPanel(settings: settings)
+        panel.face.fixedDate = ISO8601DateFormatter().date(from: "2026-11-14T10:15:36+08:00")
+        defer { panel.hideClock() }
+        for appearance in [ClockAppearance.light, .dark] {
+            settings.appearance = appearance
+            panel.apply(settings)
+            panel.face.layoutSubtreeIfNeeded()
+            let card = panel.face.dialCard
+            let sample = CGPoint(x: card.midX - 60, y: card.midY)
+            for scale in [1, 2] {
+                for space in [NSColorSpaceName.deviceRGB, .calibratedRGB] {
+                    var fullBitmap: NSBitmapImageRep?
+                    for cropped in [false, true] {
+                        let rect = cropped ? panel.face.bounds.insetBy(dx: 6, dy: 6) : panel.face.bounds
+                        let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(rect.width) * scale,
+                            pixelsHigh: Int(rect.height) * scale, bitsPerSample: 8, samplesPerPixel: 4,
+                            hasAlpha: true, isPlanar: false, colorSpaceName: space, bytesPerRow: 0, bitsPerPixel: 0)!
+                        bitmap.size = rect.size
+                        panel.face.cacheDisplay(in: rect, to: bitmap)
+                        let x = Int((sample.x - rect.minX) * CGFloat(scale))
+                        let y = Int((rect.maxY - sample.y) * CGFloat(scale))
+                        let alpha = bitmap.colorAt(x: x, y: y)?.alphaComponent ?? -1
+                        let expected = settings.backgroundAlpha / settings.contentAlpha
+                        check(panel.face.cardLayer?.shadowOpacity ?? 0 > 0 && abs(alpha - expected) <= 1.5 / 255,
+                              "\(appearance.rawValue) \(scale)x \(space.rawValue) \(cropped ? "offset" : "full") snapshot composites the shadow and card once at quantized relative alpha (actual \(alpha), expected \(expected))")
+                        if !cropped { fullBitmap = bitmap }
+                        if let full = fullBitmap, cropped {
+                            var maximum: CGFloat = 0
+                            for pointY in stride(from: Int(rect.minY) + 1, to: Int(rect.maxY) - 1, by: 5) {
+                                for pointX in stride(from: Int(rect.minX) + 1, to: Int(rect.maxX) - 1, by: 5) {
+                                    let fullAlpha = full.colorAt(x: pointX * scale, y: (Int(panel.face.bounds.maxY) - pointY) * scale)?.alphaComponent ?? -1
+                                    let croppedAlpha = bitmap.colorAt(x: (pointX - Int(rect.minX)) * scale,
+                                        y: (Int(rect.maxY) - pointY) * scale)?.alphaComponent ?? -1
+                                    maximum = max(maximum, abs(fullAlpha - croppedAlpha))
+                                }
+                            }
+                            check(maximum <= 2.0 / 255,
+                                  "\(appearance.rawValue) \(scale)x \(space.rawValue) offset snapshot matches full-image alpha including shadow (maximum difference \(maximum))")
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private static func checkVisualPolish(_ check: (Bool, String) -> Void) {
@@ -645,6 +703,38 @@ enum RuntimeChecks {
                 abs(a.blueComponent - b.blueComponent) < 0.01
         }
 
+        // Compare the rendered live card layer itself, not a replacement path.
+        panel.face.layoutSubtreeIfNeeded()
+        func cardBitmap() -> NSBitmapImageRep {
+            let layer = panel.face.cardLayer!
+            let image = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(layer.bounds.width), pixelsHigh: Int(layer.bounds.height),
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+            layer.render(in: NSGraphicsContext(bitmapImageRep: image)!.cgContext)
+            return image
+        }
+        let continuous = cardBitmap()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        panel.face.cardLayer?.cornerCurve = .circular
+        CATransaction.commit()
+        let circular = cardBitmap()
+        let stayedCircular = panel.face.cardLayer?.cornerCurve == .circular
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        panel.face.cardLayer?.cornerCurve = .continuous
+        CATransaction.commit()
+        var cornerDifferences = 0
+        for y in 0..<min(100, continuous.pixelsHigh) {
+            for x in 0..<min(100, continuous.pixelsWide) {
+                let a = continuous.colorAt(x: x, y: y)?.alphaComponent ?? 0
+                let b = circular.colorAt(x: x, y: y)?.alphaComponent ?? 0
+                if abs(a - b) > 0.05 { cornerDifferences += 1 }
+            }
+        }
+        check(stayedCircular, "test capture preserves the selected live corner curve")
+        check(cornerDifferences > 0, "live continuous card layer produces pixels distinct from a circular corner")
+
         for appearance in [ClockAppearance.light, .dark] {
             for size in [260.0, 300, 420] {
                 for above in [false, true] {
@@ -661,8 +751,35 @@ enum RuntimeChecks {
                     let width = panel.frame.width
                     let plain = bitmap()
                     let plainEdge = edgeAlpha(plain)
-                    for _ in 0..<3 { _ = timers.add() }
+                    var geometryOK = true
+                    for count in 1...3 {
+                        _ = timers.add()
+                        panel.face.layoutSubtreeIfNeeded()
+                        let tray = panel.timerTray
+                        let rows = tray.rows
+                        let gap = CardGeometry.inset
+                        geometryOK = geometryOK && rows.count == count && rows.allSatisfy { row in
+                            let controls = [row.signButton, row.kindButton, row.primaryButton, row.deleteButton].filter { !$0.isHidden }
+                            let input = row.durationInput.convert(row.durationInput.bounds, to: row)
+                            return row.layer?.cornerCurve == .continuous &&
+                                abs((row.layer?.cornerRadius ?? 0) - CardGeometry.innerRadius(height: row.bounds.height)) < 0.01 &&
+                                abs(row.frame.minX - gap) < 0.01 && abs(tray.bounds.maxX - row.frame.maxX - gap) < 0.01 &&
+                                input.width >= 180 && controls.allSatisfy { button in
+                                    let frame = button.convert(button.bounds, to: row)
+                                    return row.bounds.contains(frame) && !frame.intersects(input)
+                                }
+                        }
+                        geometryOK = geometryOK && zip(rows, rows.dropFirst()).allSatisfy {
+                            abs($0.0.frame.minY - $0.1.frame.maxY - gap) < 0.01
+                        }
+                        let outerGap = above ? tray.bounds.maxY - rows[0].frame.maxY : rows.last!.frame.minY
+                        geometryOK = geometryOK && abs(outerGap - gap) < 0.01
+                    }
                     panel.face.layoutSubtreeIfNeeded()
+                    check(geometryOK && panel.face.cardLayer?.cornerCurve == .continuous &&
+                          panel.face.cardLayer?.cornerRadius == CardGeometry.outerRadius &&
+                          CardGeometry.innerRadius(height: 48) == 24,
+                          "\(appearance.rawValue) \(Int(size)) \(above ? "above" : "below") uses continuous linked radii and eight-point row insets at 1–3 rows without control overlap")
                     let image = bitmap()
                     let outer = NSBezierPath(roundedRect: panel.face.bounds.insetBy(dx: ClockLayout.padding, dy: ClockLayout.padding),
                                              xRadius: radius, yRadius: radius)
@@ -687,6 +804,59 @@ enum RuntimeChecks {
             }
         }
         var settings = ClockSettings()
+        for text in ["12", "3", "6", "9"] {
+            for size in [260.0, 300, 420] {
+                let center = CGPoint(x: 123.4, y: 98.7)
+                let path = ClockFaceView.cardinalPath(text, at: center, font: .systemFont(ofSize: 18 * size / 224, weight: .regular))
+                let bounds = path?.boundingBoxOfPath ?? .null
+                check(!bounds.isNull && abs(bounds.midX - center.x) < 0.001 && abs(bounds.midY - center.y) < 0.001,
+                      "cardinal \(text) at \(Int(size)) is centered by its actual glyph ink")
+            }
+        }
+        settings.minuteNumeralOpacity = 60
+        settings.showsMinuteNumerals = true
+        let atThreshold = ClockFaceView.haloStrength(settings: settings)
+        settings.minuteNumeralOpacity = 80
+        let intermediate = ClockFaceView.haloStrength(settings: settings)
+        settings.minuteNumeralOpacity = 100
+        let maximum = ClockFaceView.haloStrength(settings: settings)
+        settings.showsMinuteNumerals = false
+        check(atThreshold == 0 && intermediate > 0 && intermediate < maximum && maximum == 1 &&
+              ClockFaceView.haloStrength(settings: settings) == 0 && settings.minuteNumeralOpacity == 100,
+              "hand halo starts above 60 percent, ramps smoothly, and never changes the user's concentration")
+        for size in [260.0, 300, 420] {
+            for appearance in [ClockAppearance.light, .dark] {
+                settings.faceSize = size
+                settings.appearance = appearance
+                var idle = ClockTimer()
+                idle.input = "9999小时9999分钟"
+                var target = ClockTimer()
+                target.inputKind = .targetTime
+                target.input = "19:30"
+                var running = ClockTimer()
+                try? running.start(at: Date())
+                var paused = running
+                paused.pause(at: Date())
+                let row = TimerRowView(timer: idle)
+                var allFit = true
+                for (timer, error) in [(idle, nil), (target, nil), (running, nil), (paused, nil), (idle, "输入错误")] as [(ClockTimer, String?)] {
+                    row.refresh(timer: timer, settings: settings, error: error)
+                    row.frame = CGRect(x: 0, y: 0, width: size - 2 * CardGeometry.inset, height: row.preferredHeight)
+                    row.layoutSubtreeIfNeeded()
+                    let buttons = [row.signButton, row.kindButton, row.resetButton, row.primaryButton, row.deleteButton].filter { !$0.isHidden }
+                    let visibleInput: NSView = timer.state == .idle ? (timer.inputKind == .targetTime ? row.targetInput : row.durationInput) : row.timeField
+                    let input = visibleInput.convert(visibleInput.bounds, to: row)
+                    allFit = allFit && row.bounds.contains(input) && buttons.allSatisfy { button in
+                        let frame = button.convert(button.bounds, to: row)
+                        return row.bounds.contains(frame) && !frame.intersects(input)
+                    } && (row.statusLabel.isHidden || row.bounds.contains(row.statusLabel.frame)) &&
+                        row.layer?.cornerRadius == CardGeometry.innerRadius(height: row.bounds.height)
+                    if timer.state == .idle { allFit = allFit && input.width >= 180 }
+                }
+                check(allFit, "\(appearance.rawValue) \(Int(size)) idle four digits, target, running, paused and error controls fit without overlapping")
+            }
+        }
+        settings = ClockSettings()
         settings.transparency = 0
         panel.apply(settings)
         panel.face.fixedDate = ISO8601DateFormatter().date(from: "2026-11-14T10:15:36+08:00")
@@ -1271,6 +1441,14 @@ enum RuntimeChecks {
                 settings.minuteNumeralOpacity = Double(opacity)
                 settings.appearance = appearance
                 try renderFace(to: "\(directory)/minute-layer-\(appearance.rawValue)-opacity\(opacity).png", settings: settings)
+            }
+            for minute in [0, 11, 58] {
+                var settings = ClockSettings()
+                settings.transparency = 0
+                settings.showsMinuteNumerals = true
+                settings.minuteNumeralOpacity = 100
+                settings.appearance = appearance
+                try renderFace(to: "\(directory)/halo-\(appearance.rawValue)-minute\(minute).png", settings: settings, minute: minute)
             }
         }
     }

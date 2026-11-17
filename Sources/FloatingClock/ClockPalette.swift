@@ -21,4 +21,5 @@ struct ClockPalette {
     var warning: NSColor { dark ? color(1, 0.73, 0.34) : color(0.61, 0.36, 0.08) }
     var error: NSColor { .systemRed }
     var inputBackground: NSColor { NSColor.white.withAlphaComponent(dark ? 0.055 : 0.7) }
+    var timerRowBackground: NSColor { ink.withAlphaComponent(dark ? 0.085 : 0.035) }
 }

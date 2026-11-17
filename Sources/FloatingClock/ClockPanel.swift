@@ -183,7 +183,7 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         timerTray.frame = layout.trayFrame
         timerHint.frame = CGRect(x: ClockLayout.padding + 10, y: ClockLayout.padding + 6,
                                  width: layout.frame.width - ClockLayout.padding * 2 - 20, height: 16)
-        face.needsDisplay = true
+        face.invalidateDial()
         invalidateCursorRects(for: face)
     }
 
@@ -255,9 +255,9 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
 
     private func startTicker() {
         ticker?.invalidate()
-        face.needsDisplay = true
+        face.invalidateDial()
         let timer = Timer(timeInterval: settings.showsSeconds ? 1 / 30 : 1, repeats: true) { [weak self] _ in
-            self?.face.needsDisplay = true
+            self?.face.invalidateDial()
         }
         timer.tolerance = settings.showsSeconds ? 0.008 : 0.1
         RunLoop.main.add(timer, forMode: .common)

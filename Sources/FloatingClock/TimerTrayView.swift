@@ -37,7 +37,7 @@ final class TimerRowView: NSView {
         id = timer.id
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = 14
+        layer?.cornerCurve = .continuous
         layer?.borderWidth = 0.5
         signButton.font = .systemFont(ofSize: 17, weight: .medium)
         signButton.target = self; signButton.action = #selector(toggleSign)
@@ -89,8 +89,8 @@ final class TimerRowView: NSView {
         line.orientation = .horizontal; line.alignment = .centerY; line.spacing = 4; line.distribution = .fill
         for view in [line, statusLabel] { view.translatesAutoresizingMaskIntoConstraints = false; addSubview(view) }
         NSLayoutConstraint.activate([
-            line.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7),
-            line.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -7),
+            line.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            line.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
             line.centerYAnchor.constraint(equalTo: centerYAnchor),
             line.heightAnchor.constraint(equalToConstant: 38),
             statusLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
@@ -107,6 +107,14 @@ final class TimerRowView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer?.cornerRadius = CardGeometry.innerRadius(height: bounds.height)
+        CATransaction.commit()
+    }
 
     func refresh(timer: ClockTimer, settings: ClockSettings, error: String?, now: Date = Date()) {
         let editing = timer.state == .idle
@@ -175,8 +183,11 @@ final class TimerRowView: NSView {
     private func applyAppearance() {
         let palette = ClockPalette(selectedAppearance, effectiveAppearance: effectiveAppearance)
         let ink = palette.ink
-        layer?.backgroundColor = ink.withAlphaComponent(palette.dark ? 0.065 : 0.035).cgColor
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer?.backgroundColor = palette.timerRowBackground.cgColor
         layer?.borderColor = ink.withAlphaComponent(0.06).cgColor
+        CATransaction.commit()
         durationInput.apply(palette: palette)
         targetInput.apply(palette: palette)
         signButton.contentTintColor = accentReadout ? palette.warning : (accentSign ? palette.accent : ink)
@@ -212,14 +223,14 @@ final class TimerRowView: NSView {
 }
 
 final class TimerTrayView: NSView {
-    private static let rowSpacing: CGFloat = 6
+    private static let rowSpacing: CGFloat = CardGeometry.inset
     private let notice = NSTextField(labelWithString: "")
     private var selectedAppearance: ClockAppearance = .light
     private(set) var rows: [TimerRowView] = []
     var coordinator: TimerCoordinator?
 
     var contentHeight: CGFloat {
-        rows.isEmpty ? 0 : 8 + rows.reduce(0) { $0 + $1.preferredHeight + Self.rowSpacing } + (notice.isHidden ? 0 : 32)
+        rows.isEmpty ? 0 : CardGeometry.inset + rows.reduce(0) { $0 + $1.preferredHeight + Self.rowSpacing } + (notice.isHidden ? 0 : 32)
     }
 
     override init(frame frameRect: NSRect) {
@@ -280,10 +291,10 @@ final class TimerTrayView: NSView {
 
     override func layout() {
         super.layout()
-        var top = bounds.height - 8
+        var top = bounds.height - CardGeometry.inset
         for row in rows {
-            row.frame = CGRect(x: 4, y: top - row.preferredHeight,
-                               width: bounds.width - 8, height: row.preferredHeight)
+            row.frame = CGRect(x: CardGeometry.inset, y: top - row.preferredHeight,
+                               width: bounds.width - 2 * CardGeometry.inset, height: row.preferredHeight)
             top = row.frame.minY - Self.rowSpacing
         }
         notice.frame = CGRect(x: 10, y: 8, width: bounds.width - 20, height: 18)

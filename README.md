@@ -141,7 +141,7 @@ open dist/FloatingClock.app
 
 **解锁 → 将鼠标移入时钟 → 点击赤陶色计时图标**，即可添加一组计时，最多三组。
 
-计时区与表盘组成一个圆角长方形，靠屏幕上方时向下展开，靠下时向上展开；拖动过程中会与快捷入口同步实时更新方向，表盘保持跟随鼠标，松开后将整个窗口收回屏幕内并保存位置。只有按住表盘才能移动窗口，拖动计时行、计时区空白或底部说明不会移动窗口，输入框和按钮仍可正常操作。删除最后一组后恢复方形表盘。表盘最小尺寸已与计时区宽度对齐，添加或删除计时器不会改变宽度。
+计时区与表盘组成一个圆角长方形，外卡和计时行使用协调的连续圆角；靠屏幕上方时向下展开，靠下时向上展开；拖动过程中会与快捷入口同步实时更新方向，表盘保持跟随鼠标，松开后将整个窗口收回屏幕内并保存位置。只有按住表盘才能移动窗口，拖动计时行、计时区空白或底部说明不会移动窗口，输入框和按钮仍可正常操作。删除最后一组后恢复方形表盘。表盘最小尺寸已与计时区宽度对齐，添加或删除计时器不会改变宽度。
 
 <p>
   <img src='docs/images/timers-light.png' alt='两组计时：机械计时器与箭头图标切换时长和到点时间' width='284'>
@@ -175,7 +175,7 @@ open dist/FloatingClock.app
 
 点击 **菜单栏时钟图标 → 高级设置…**，打开独立设置窗口。
 
-窗口顶部的“常规”区域也提供透明度、锁定、显示或隐藏时钟及移回当前屏幕；底部可退出应用。菜单栏、快捷菜单和高级设置的状态实时同步。隐藏时钟后，设置窗口仍可操作；“移回当前屏幕”会重新显示时钟。设置内容可上下滚动。
+窗口顶部的“常规”区域也提供透明度、锁定、显示或隐藏时钟及移回当前屏幕；退出应用请使用菜单栏。菜单栏、快捷菜单和高级设置的状态实时同步。隐藏时钟后，设置窗口仍可操作；“移回当前屏幕”会重新显示时钟。设置内容可上下滚动。
 
 <img src='docs/images/advanced-settings.png' alt='高级设置：表盘、显示内容、分钟大字浓度与大小' width='500'>
 
@@ -222,7 +222,7 @@ open dist/FloatingClock.app
 
 数字使用 **Comic Sans MS**。当系统没有该字体时，代码会回退到系统字体；仓库不分发字体文件。
 
-数字以实际字形轮廓居中，与时针、分针的原点对齐。指针绘制在大字上方；100% 大小时，数字仍留在刻度圈内，保留小间隙。个位分钟补零，例如 `00`、`05`、`09`。
+数字以实际字形轮廓居中，与时针、分针的原点对齐。指针绘制在大字上方；大字浓度超过 60% 时，指针逐渐出现窄背景色描边，帮助辨认重叠部分，不改变选定浓度。100% 大小时，数字仍留在刻度圈内，保留小间隙。个位分钟补零，例如 `00`、`05`、`09`。
 
 关闭分钟大字后，浓度和大小控件会变灰，已有数值会保留；重新开启后恢复可调。
 
@@ -265,8 +265,8 @@ open dist/FloatingClock.app
 | Swift Package Manager | 模块组织、构建可执行文件和运行测试 |
 | AppKit / Cocoa | `NSPanel` 漂浮窗口、`NSStatusItem` 菜单栏、`NSMenu` 菜单与原生控件 |
 | NSWindowController、Auto Layout、NSStackView | 构建和管理独立高级设置窗口 |
-| NSBezierPath / Core Graphics | 表盘、刻度、指针、圆角和阴影绘制 |
-| Core Text | 提取 Comic Sans MS 数字轮廓，实现按实际字形居中与缩放 |
+| CALayer / Core Graphics | 连续圆角卡片、阴影、表盘刻度与指针绘制 |
+| Core Text | 提取数字字形轮廓，实现按实际字形居中与缩放 |
 | Foundation | `Date`、`Calendar`、`Timer`、`Codable` 与本地设置 |
 | UserDefaults | 保存表盘偏好与位置 |
 | XCTest | 核心逻辑、偏好迁移和布局测试 |
@@ -322,6 +322,7 @@ FloatingClock/
 │       ├── main.swift                  # 应用生命周期和状态协调
 │       ├── ClockPanel.swift            # 漂浮窗口、穿透、显示与隐藏
 │       ├── ClockFaceView.swift         # 表盘与指针绘制
+│       ├── CardGeometry.swift          # 外卡与计时行的间距、关联圆角
 │       ├── MinuteNumerals.swift        # 分钟数字字形与缩放
 │       ├── MenuController.swift        # 菜单栏和三项快捷菜单
 │       ├── AdvancedSettingsWindowController.swift
@@ -329,6 +330,7 @@ FloatingClock/
 │       ├── TimerCoordinator.swift       # 计时调度与系统通知
 │       ├── TimerTrayView.swift          # 三组计时的输入和读数
 │       ├── TimerTimeInput.swift         # 共用数字框、上下调节与光标跳转
+│       ├── LiveDisplayChecks.swift     # WindowServer 实窗重绘回归
 │       └── RuntimeChecks.swift         # 原生检查与文档预览生成
 ├── Tests/ClockCoreTests/
 ├── Resources/
@@ -370,6 +372,9 @@ bash scripts/test.sh
 
 # 原生 AppKit 集成检查，需要可用的 macOS 图形会话
 ./dist/FloatingClock.app/Contents/MacOS/FloatingClock --smoke-test
+
+# 真实窗口重绘检查：图片和 JSON 写入指定目录，需要可用的图形会话及窗口图像捕获
+./dist/FloatingClock.app/Contents/MacOS/FloatingClock --live-display-test "$PWD/work/live-display-check"
 ```
 
 原生检查会短暂显示测试窗口，使用独立的临时 UserDefaults 域，完成后清理测试偏好；不会写入用户实际的时钟设置。通知调度使用替代实现验证安排、取消和延迟回调，不会在测试中请求系统通知授权。
@@ -392,6 +397,7 @@ bash scripts/test.sh
 - 无运行计时时的系统浅深外观切换、活动输入与光标同步，以及固定外观不受系统切换影响。
 - 三组上限、小时／分钟数字框、原生上下调节按钮、输入焦点、上下展开、多显示器坐标、计时保存和通知调度／取消。
 - WindowServer 实际命中测试：主表盘穿透，只有小“＋”仍接收点击。
+- 独立实窗重绘检查在首次快照之前验证主题、指针时间与 ticker、日期让位和恢复、分钟大字及高浓度描边；快照测试另验证阴影与背景的整体透明度。
 
 ### 重新生成文档图片
 

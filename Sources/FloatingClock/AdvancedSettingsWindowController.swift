@@ -83,7 +83,6 @@ final class AdvancedSettingsWindowController: NSWindowController {
     let lockButton = NSButton(checkboxWithTitle: "锁定位置（鼠标穿透）", target: nil, action: nil)
     let visibilityButton = NSButton(checkboxWithTitle: "显示时钟", target: nil, action: nil)
     let moveToScreenButton = NSButton(title: "移回当前屏幕", target: nil, action: nil)
-    let quitButton = NSButton(title: "退出漂浮时钟", target: nil, action: nil)
     let stylePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     let appearancePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     let timerFormatPopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -107,7 +106,6 @@ final class AdvancedSettingsWindowController: NSWindowController {
     var onSettingsChanged: ((ClockSettings) -> Void)?
     var onToggleVisibility: (() -> Void)?
     var onMoveToCurrentScreen: (() -> Void)?
-    var onQuit: (() -> Void)?
 
     init(settings: ClockSettings) {
         self.settings = settings.normalized()
@@ -134,10 +132,8 @@ final class AdvancedSettingsWindowController: NSWindowController {
 
     private func buildContent() {
         guard let window, let content = window.contentView else { return }
-        let title = NSTextField(labelWithString: "高级设置")
-        title.font = .systemFont(ofSize: 20, weight: .semibold)
         let subtitle = note("调整会立即生效，并自动保存。")
-        let header = stack([title, subtitle], spacing: 5)
+        let header = stack([subtitle], spacing: 5)
 
         lockButton.target = self
         lockButton.action = #selector(lockChanged)
@@ -194,10 +190,7 @@ final class AdvancedSettingsWindowController: NSWindowController {
         let done = NSButton(title: "完成", target: self, action: #selector(closeSettings))
         done.bezelStyle = .rounded
         done.keyEquivalent = "\r"
-        quitButton.target = self
-        quitButton.action = #selector(quitApp)
-        quitButton.bezelStyle = .rounded
-        let footer = NSStackView(views: [quitButton, NSView(), done])
+        let footer = NSStackView(views: [NSView(), done])
         footer.orientation = .horizontal
         let form = stack([general, separator(), dial, separator(), details, separator(), minutes, separator(), timers], spacing: 16)
         form.translatesAutoresizingMaskIntoConstraints = false
@@ -313,6 +306,5 @@ final class AdvancedSettingsWindowController: NSWindowController {
     @objc private func lockChanged() { change { $0.isLocked = lockButton.state == .on } }
     @objc private func visibilityChanged() { onToggleVisibility?() }
     @objc private func moveToCurrentScreen() { onMoveToCurrentScreen?() }
-    @objc private func quitApp() { onQuit?() }
     @objc private func closeSettings() { close() }
 }

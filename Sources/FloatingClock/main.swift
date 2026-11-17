@@ -61,7 +61,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.onSettingsChanged = { [weak self] updated in self?.applySettings(updated) }
             controller.onToggleVisibility = { [weak self] in self?.toggleClockVisibility() }
             controller.onMoveToCurrentScreen = { [weak self] in self?.moveClockToCurrentScreen() }
-            controller.onQuit = { NSApp.terminate(nil) }
             advancedSettingsController = controller
         }
         advancedSettingsController?.settings = settings
@@ -111,6 +110,9 @@ let application = NSApplication.shared
 application.setActivationPolicy(.accessory)
 if CommandLine.arguments.contains("--smoke-test") {
     exit(RuntimeChecks.run())
+}
+if let index = CommandLine.arguments.firstIndex(of: "--live-display-test"), CommandLine.arguments.count > index + 1 {
+    LiveDisplayChecks.run(to: CommandLine.arguments[index + 1])
 }
 if let index = CommandLine.arguments.firstIndex(of: "--render-timer-previews"), CommandLine.arguments.count > index + 1 {
     do {
