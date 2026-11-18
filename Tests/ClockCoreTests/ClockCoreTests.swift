@@ -16,7 +16,7 @@ final class ClockCoreTests: XCTestCase {
         }
     }
 
-    func testContentOpacityUsesSmoothQuadraticCompensationAndStaysVisible() {
+    func testLinkedTransparencyCompensationPeaksAtTheMidpointAndMatchesAtBothEnds() {
         var settings = ClockSettings()
         var previous = 1.0
         for transparency in 0...90 {
@@ -25,17 +25,40 @@ final class ClockCoreTests: XCTestCase {
             XCTAssertEqual(settings.backgroundAlpha, 1 - Double(transparency) / 100, accuracy: 0.000001)
             XCTAssertGreaterThanOrEqual(content, settings.backgroundAlpha)
             XCTAssertLessThanOrEqual(content, settings.backgroundAlpha + 0.100001)
-            XCTAssertGreaterThanOrEqual(content, 0.199999)
+            XCTAssertGreaterThanOrEqual(content, 0.099999)
             XCTAssertLessThanOrEqual(content, previous)
             previous = content
         }
-        for (transparency, background, content) in [(0.0, 1.0, 1.0), (45, 0.55, 0.625), (80, 0.2, 0.2987654321), (90, 0.1, 0.2)] {
+        for (transparency, background, content) in [(0.0, 1.0, 1.0), (45, 0.55, 0.65), (80, 0.2, 0.2395061728), (90, 0.1, 0.1)] {
             settings.transparency = transparency
             XCTAssertEqual(settings.backgroundAlpha, background, accuracy: 0.000001)
             XCTAssertEqual(settings.contentAlpha, content, accuracy: 0.000001)
         }
         settings.transparency = .nan
         XCTAssertTrue(settings.contentAlpha.isFinite)
+    }
+
+    func testAdjustingEitherLayerEntersManualModeAndOverallAdjustmentRelinksBoth() {
+        var settings = ClockSettings()
+        settings.transparency = 20
+        let linkedContent = settings.contentTransparency
+        settings.backgroundTransparency = 72
+        XCTAssertTrue(settings.usesCustomTransparency)
+        XCTAssertEqual(settings.contentTransparency, linkedContent)
+        XCTAssertEqual(settings.backgroundTransparency, 72)
+
+        settings.contentTransparency = 55
+        XCTAssertEqual(settings.backgroundTransparency, 72)
+        XCTAssertEqual(settings.transparency, 20)
+        settings.transparency = 20
+        XCTAssertFalse(settings.usesCustomTransparency)
+        XCTAssertEqual(settings.contentTransparency, linkedContent)
+        XCTAssertEqual(settings.backgroundTransparency, 20)
+
+        settings.contentTransparency = 110
+        settings.backgroundTransparency = -5
+        XCTAssertEqual(settings.normalized().contentTransparency, 90)
+        XCTAssertEqual(settings.normalized().backgroundTransparency, 0)
     }
 
     func testQuickAccessChoosesOppositeHorizontalCornerInEachScreenQuadrant() {
@@ -77,7 +100,7 @@ final class ClockCoreTests: XCTestCase {
         settings.faceSize = -1
         XCTAssertEqual(settings.normalized().transparency, 90)
         XCTAssertEqual(settings.backgroundAlpha, 0.1, accuracy: 0.0001)
-        XCTAssertEqual(settings.contentAlpha, 0.2, accuracy: 0.0001)
+        XCTAssertEqual(settings.contentAlpha, 0.1, accuracy: 0.0001)
         XCTAssertEqual(settings.normalized().faceSize, 260)
         settings.transparency = .nan
         settings.origin = StoredPoint(x: .infinity, y: 10)
@@ -91,6 +114,8 @@ final class ClockCoreTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         var settings = ClockSettings()
         settings.transparency = 63
+        settings.contentTransparency = 70
+        settings.backgroundTransparency = 44
         settings.isLocked = true
         settings.faceSize = 284
         settings.appearance = .dark
@@ -114,6 +139,9 @@ final class ClockCoreTests: XCTestCase {
         let settings = try JSONDecoder().decode(ClockSettings.self, from: data)
         XCTAssertEqual(settings.style, .minimal)
         XCTAssertEqual(settings.transparency, 63)
+        XCTAssertFalse(settings.usesCustomTransparency)
+        XCTAssertEqual(settings.backgroundTransparency, 63)
+        XCTAssertEqual(settings.contentTransparency, 54.6, accuracy: 0.0001)
         XCTAssertEqual(settings.faceSize, 284)
         XCTAssertEqual(settings.appearance, .dark)
         XCTAssertTrue(settings.isLocked)

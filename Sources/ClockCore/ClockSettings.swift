@@ -23,7 +23,14 @@ public struct StoredPoint: Codable, Equatable {
 }
 
 public struct ClockSettings: Codable, Equatable {
-    public var transparency: Double = 20
+    public var transparency: Double = 20 {
+        didSet { customTransparency = nil }
+    }
+    private struct CustomTransparency: Codable, Equatable {
+        let content: Double
+        let background: Double
+    }
+    private var customTransparency: CustomTransparency?
     public var faceSize: Double = Double(ClockLayout.minimumFaceSize)
     public var appearance: ClockAppearance = .light
     public var style: ClockStyle = .minimal
@@ -42,7 +49,7 @@ public struct ClockSettings: Codable, Equatable {
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case transparency, faceSize, appearance, style, showsMinuteNumerals, minuteNumeralOpacity, minuteNumeralSize
+        case transparency, customTransparency, faceSize, appearance, style, showsMinuteNumerals, minuteNumeralOpacity, minuteNumeralSize
         case isLocked, showsSeconds, showsDate, timerDisplayFormat, origin
         case selectedClockSlot, secondClockTimeZone, thirdClockTimeZone
     }
@@ -51,6 +58,7 @@ public struct ClockSettings: Codable, Equatable {
         self.init()
         let values = try decoder.container(keyedBy: CodingKeys.self)
         transparency = try values.decodeIfPresent(Double.self, forKey: .transparency) ?? transparency
+        customTransparency = try? values.decode(CustomTransparency.self, forKey: .customTransparency)
         faceSize = try values.decodeIfPresent(Double.self, forKey: .faceSize) ?? faceSize
         appearance = try values.decodeIfPresent(ClockAppearance.self, forKey: .appearance) ?? appearance
         let savedStyle = try values.decodeIfPresent(String.self, forKey: .style)
@@ -103,19 +111,46 @@ public struct ClockSettings: Codable, Equatable {
         return calendar
     }
 
-    public var backgroundAlpha: Double { 1 - normalized().transparency / 100 }
-    public var contentAlpha: Double {
-        let transparency = normalized().transparency
-        let progress = transparency / 90
-        // A quadratic compensation grows smoothly from zero to ten percentage
-        // points, keeping content at 20% opacity at maximum transparency.
-        return 1 - transparency / 100 + 0.1 * progress * (2 - progress)
+    public var usesCustomTransparency: Bool { customTransparency != nil }
+    public var contentTransparency: Double {
+        get {
+            let linked = linkedContentTransparency
+            return Self.clampedTransparency(customTransparency?.content ?? linked, fallback: linked)
+        }
+        set { customTransparency = CustomTransparency(content: newValue, background: backgroundTransparency) }
     }
+    public var backgroundTransparency: Double {
+        get {
+            let linked = overallTransparency
+            return Self.clampedTransparency(customTransparency?.background ?? linked, fallback: linked)
+        }
+        set { customTransparency = CustomTransparency(content: contentTransparency, background: newValue) }
+    }
+
+    public var backgroundAlpha: Double { 1 - backgroundTransparency / 100 }
+    public var contentAlpha: Double { 1 - contentTransparency / 100 }
     public var minuteNumeralAlpha: Double { normalized().minuteNumeralOpacity / 100 }
+
+    private var overallTransparency: Double { Self.clampedTransparency(transparency.rounded(), fallback: 20) }
+
+    private var linkedContentTransparency: Double {
+        let overall = overallTransparency
+        let progress = overall / 90
+        // The compensation peaks at 10 percentage points halfway through the range.
+        return overall - 40 * progress * (1 - progress)
+    }
+
+    private static func clampedTransparency(_ value: Double, fallback: Double) -> Double {
+        value.isFinite ? min(90, max(0, value)) : fallback
+    }
 
     public func normalized() -> Self {
         var result = self
-        result.transparency = transparency.isFinite ? min(90, max(0, transparency.rounded())) : 20
+        result.transparency = overallTransparency
+        // Preserve manual values when normalizing the stored overall slider position.
+        if usesCustomTransparency {
+            result.customTransparency = CustomTransparency(content: contentTransparency, background: backgroundTransparency)
+        }
         result.faceSize = faceSize.isFinite ? min(Double(ClockLayout.maximumFaceSize), max(Double(ClockLayout.minimumFaceSize), faceSize)) : Double(ClockLayout.minimumFaceSize)
         result.minuteNumeralOpacity = minuteNumeralOpacity.isFinite ? min(100, max(0, minuteNumeralOpacity.rounded())) : 40
         result.minuteNumeralSize = minuteNumeralSize.isFinite ? min(100, max(40, minuteNumeralSize.rounded())) : 100

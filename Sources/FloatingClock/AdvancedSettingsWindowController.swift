@@ -7,9 +7,18 @@ private final class SettingsDocumentView: NSView {
 
 final class SettingsSliderRow: NSView {
     let slider: NSSlider
+    private let titleLabel: NSTextField
     private let valueLabel = NSTextField(labelWithString: "")
     private let suffix: String
     var onChange: ((Double) -> Void)?
+
+    var title: String {
+        get { titleLabel.stringValue }
+        set {
+            titleLabel.stringValue = newValue
+            slider.setAccessibilityLabel(newValue)
+        }
+    }
 
     var isEnabled = true {
         didSet {
@@ -22,9 +31,9 @@ final class SettingsSliderRow: NSView {
          lowText: String, highText: String, help: String) {
         slider = NSSlider(value: value, minValue: range.lowerBound, maxValue: range.upperBound,
                           target: nil, action: nil)
+        titleLabel = NSTextField(labelWithString: title)
         self.suffix = suffix
         super.init(frame: .zero)
-        let titleLabel = NSTextField(labelWithString: title)
         let low = NSTextField(labelWithString: lowText)
         let high = NSTextField(labelWithString: highText)
         titleLabel.font = .systemFont(ofSize: 13)
@@ -216,8 +225,15 @@ final class AdvancedSettingsWindowController: NSWindowController, NSWindowDelega
     let dateButton = NSButton(checkboxWithTitle: "显示日期与星期", target: nil, action: nil)
     let minuteNumeralsButton = NSButton(checkboxWithTitle: "显示分钟大字", target: nil, action: nil)
     let transparencyRow = SettingsSliderRow(
+        title: "整体透明度", value: 20, range: 0...90,
+        lowText: "0% · 不透明", highText: "90% · 最透明", help: "重新联动背景和信息元素。中间档位的信息元素稍清晰，滑块两端使用相同透明度。")
+    let transparencyDisclosureButton = TransparencyDisclosureButton()
+    let contentTransparencyRow = SettingsSliderRow(
+        title: "信息元素透明度", value: 20, range: 0...90,
+        lowText: "0% · 不透明", highText: "90% · 最透明", help: "单独调整刻度、指针、文字、分钟大字和计时器。")
+    let backgroundTransparencyRow = SettingsSliderRow(
         title: "背景透明度", value: 20, range: 0...90,
-        lowText: "0% · 不透明", highText: "90% · 最透明", help: "背景按此数值变透明；指针、刻度、文字和计时器会稍清晰，至少保留 20% 不透明度。0% 时全部不透明。")
+        lowText: "0% · 不透明", highText: "90% · 最透明", help: "单独调整时钟底板和阴影。")
     let faceSizeRow = SettingsSliderRow(
         title: "时钟大小", value: Double(ClockLayout.minimumFaceSize), range: Double(ClockLayout.minimumFaceSize)...Double(ClockLayout.maximumFaceSize), suffix: "",
         lowText: "260 · 小号", highText: "420 · 大号", help: "调整整个表盘的大小，最小尺寸与计时区宽度对齐。")
@@ -284,7 +300,12 @@ final class AdvancedSettingsWindowController: NSWindowController, NSWindowDelega
         let visibilityRow = NSStackView(views: [visibilityButton, NSView(), moveToScreenButton])
         visibilityRow.orientation = .horizontal
         visibilityRow.alignment = .centerY
-        let general = stack([heading("常规"), transparencyRow, lockButton, visibilityRow])
+        transparencyDisclosureButton.target = self
+        transparencyDisclosureButton.action = #selector(toggleTransparencyDetails)
+        let general = stack([heading("常规"), transparencyRow, transparencyDisclosureButton,
+                             contentTransparencyRow, backgroundTransparencyRow, lockButton, visibilityRow])
+        contentTransparencyRow.isHidden = true
+        backgroundTransparencyRow.isHidden = true
 
         clockSlotPopup.addItems(withTitles: ClockSlot.allCases.map { settings.title(for: $0) })
         clockSlotPopup.target = self
@@ -385,6 +406,8 @@ final class AdvancedSettingsWindowController: NSWindowController, NSWindowDelega
         let height = layout.fittingSize.height + 44
         window.setContentSize(NSSize(width: 500, height: height))
         transparencyRow.onChange = { [weak self] value in self?.change { $0.transparency = value } }
+        contentTransparencyRow.onChange = { [weak self] value in self?.change { $0.contentTransparency = value } }
+        backgroundTransparencyRow.onChange = { [weak self] value in self?.change { $0.backgroundTransparency = value } }
         faceSizeRow.onChange = { [weak self] value in self?.change { $0.faceSize = value } }
         minuteOpacityRow.onChange = { [weak self] value in self?.change { $0.minuteNumeralOpacity = value } }
         minuteSizeRow.onChange = { [weak self] value in self?.change { $0.minuteNumeralSize = value } }
@@ -429,7 +452,10 @@ final class AdvancedSettingsWindowController: NSWindowController, NSWindowDelega
     }
 
     private func refresh() {
+        transparencyRow.title = settings.usesCustomTransparency ? "整体透明度 · 手动分层" : "整体透明度"
         transparencyRow.update(settings.transparency)
+        contentTransparencyRow.update(settings.contentTransparency)
+        backgroundTransparencyRow.update(settings.backgroundTransparency)
         lockButton.state = settings.isLocked ? .on : .off
         visibilityButton.state = clockIsVisible ? .on : .off
         for (index, slot) in ClockSlot.allCases.enumerated() {
@@ -458,6 +484,11 @@ final class AdvancedSettingsWindowController: NSWindowController, NSWindowDelega
         onSettingsChanged?(settings)
     }
 
+    @objc private func toggleTransparencyDetails() {
+        transparencyDisclosureButton.isExpanded.toggle()
+        contentTransparencyRow.isHidden = !transparencyDisclosureButton.isExpanded
+        backgroundTransparencyRow.isHidden = !transparencyDisclosureButton.isExpanded
+    }
     @objc private func styleChanged() { change { $0.style = ClockStyle.allCases[stylePopup.indexOfSelectedItem] } }
     @objc private func clockSlotChanged() { change { $0.selectedClockSlot = ClockSlot.allCases[clockSlotPopup.indexOfSelectedItem] } }
     @objc private func appearanceChanged() { change { $0.appearance = ClockAppearance.allCases[appearancePopup.indexOfSelectedItem] } }

@@ -15,7 +15,14 @@ private final class CardBackgroundView: NSView {
 }
 
 final class ClockFaceView: NSView {
-    var settings = ClockSettings() { didSet { updateCard(); invalidateDial(); window?.invalidateCursorRects(for: self) } }
+    var settings = ClockSettings() {
+        didSet {
+            drawing.alphaValue = relativeContentAlpha
+            updateCard()
+            invalidateDial()
+            window?.invalidateCursorRects(for: self)
+        }
+    }
     var fixedDate: Date? { didSet { invalidateDial() } }
     var onDragMoved: ((CGRect) -> Void)?
     var onDragFinished: (() -> Void)?
@@ -48,6 +55,8 @@ final class ClockFaceView: NSView {
     private let background = CardBackgroundView()
     private let drawing = DialDrawingView()
     var cardLayer: CALayer? { background.layer }
+    var compositingAlpha: CGFloat { max(settings.backgroundAlpha, settings.contentAlpha) }
+    var relativeContentAlpha: CGFloat { settings.contentAlpha / compositingAlpha }
 
     // Keep callers of NSView's public invalidation API working as well as the
     // explicit dial invalidation below. Do not read NSView's getter after set:
@@ -137,7 +146,7 @@ final class ClockFaceView: NSView {
         layer.shadowOpacity = palette.dark ? 0.22 : 0.11
         layer.shadowRadius = 4
         layer.shadowOffset = CGSize(width: 0, height: -1)
-        layer.opacity = Float(settings.backgroundAlpha / settings.contentAlpha)
+        layer.opacity = Float(settings.backgroundAlpha / compositingAlpha)
         CATransaction.commit()
     }
 

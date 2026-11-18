@@ -3,41 +3,38 @@ import ClockCore
 
 final class PercentageMenuView: NSView {
     let slider: NSSlider
+    private let titleLabel: NSTextField
     private let valueLabel: NSTextField
     var onChange: ((Double) -> Void)?
 
-    init(titleText: String = "背景透明度", initialValue: Double = 20, maximum: Double = 90,
-         lowText: String = "0% 不透明", highText: String = "90% 最透明",
-         accessibilityLabel: String = "时钟背景透明度，0% 到 90%",
-         help: String = "背景按设定变透明，其他内容会稍清晰，至少保留 20% 不透明度；0% 时全部不透明。") {
-        slider = NSSlider(value: initialValue, minValue: 0, maxValue: maximum, target: nil, action: nil)
-        valueLabel = NSTextField(labelWithString: "\(Int(initialValue))%")
-        super.init(frame: CGRect(x: 0, y: 0, width: 286, height: 92))
-        let title = NSTextField(labelWithString: titleText)
-        title.font = .systemFont(ofSize: 12, weight: .medium)
-        title.frame = CGRect(x: 20, y: 64, width: 160, height: 18)
-        addSubview(title)
+    var title: String {
+        get { titleLabel.stringValue }
+        set {
+            titleLabel.stringValue = newValue
+            slider.setAccessibilityLabel(newValue)
+        }
+    }
+
+    init(title: String, help: String) {
+        slider = NSSlider(value: 0, minValue: 0, maxValue: 90, target: nil, action: nil)
+        titleLabel = NSTextField(labelWithString: title)
+        valueLabel = NSTextField(labelWithString: "")
+        super.init(frame: CGRect(x: 0, y: 0, width: 286, height: 58))
+        titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        titleLabel.frame = CGRect(x: 20, y: 34, width: 184, height: 18)
+        addSubview(titleLabel)
         valueLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
         valueLabel.alignment = .right
-        valueLabel.frame = CGRect(x: 212, y: 64, width: 54, height: 18)
+        valueLabel.frame = CGRect(x: 212, y: 34, width: 54, height: 18)
         addSubview(valueLabel)
-        slider.frame = CGRect(x: 18, y: 31, width: 250, height: 25)
+        slider.frame = CGRect(x: 18, y: 5, width: 250, height: 25)
         slider.isContinuous = true
         slider.target = self
         slider.action = #selector(sliderChanged)
-        slider.setAccessibilityLabel(accessibilityLabel)
+        slider.setAccessibilityLabel(title)
         slider.setAccessibilityHelp(help)
+        slider.toolTip = help
         addSubview(slider)
-        let low = NSTextField(labelWithString: lowText)
-        let high = NSTextField(labelWithString: highText)
-        for label in [low, high] {
-            label.font = .systemFont(ofSize: 10)
-            label.textColor = .secondaryLabelColor
-            addSubview(label)
-        }
-        low.frame = CGRect(x: 20, y: 10, width: 120, height: 15)
-        high.frame = CGRect(x: 146, y: 10, width: 120, height: 15)
-        high.alignment = .right
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -45,7 +42,7 @@ final class PercentageMenuView: NSView {
 
     func update(_ transparency: Double) {
         slider.doubleValue = transparency
-        valueLabel.stringValue = "\(Int(transparency))%"
+        valueLabel.stringValue = "\(Int(transparency.rounded()))%"
     }
 
     @objc private func sliderChanged() {
@@ -58,7 +55,11 @@ final class PercentageMenuView: NSView {
 final class MenuController: NSObject, NSMenuDelegate {
     let menu = NSMenu()
     let quickMenu = NSMenu()
-    let transparencyView = PercentageMenuView()
+    let transparencyView = PercentageMenuView(title: "整体透明度", help: "联动背景和信息元素，中间档位的信息元素稍清晰。")
+    let transparencyDisclosureButton = TransparencyDisclosureButton(horizontalInset: 20)
+    let contentTransparencyView = PercentageMenuView(title: "信息元素透明度", help: "单独调整刻度、指针、文字、分钟大字和计时器。")
+    let backgroundTransparencyView = PercentageMenuView(title: "背景透明度", help: "单独调整时钟底板和阴影。")
+    private let layerTransparencyItems = [NSMenuItem(), NSMenuItem()]
     private var statusItem: NSStatusItem?
     private let subtitle = NSTextField(labelWithString: "始终置顶 · 拖动表盘移动")
     private var lockItem: NSMenuItem!
@@ -99,6 +100,8 @@ final class MenuController: NSObject, NSMenuDelegate {
             statusItem = item
         }
         transparencyView.onChange = { [weak self] value in self?.change { $0.transparency = value } }
+        contentTransparencyView.onChange = { [weak self] value in self?.change { $0.contentTransparency = value } }
+        backgroundTransparencyView.onChange = { [weak self] value in self?.change { $0.backgroundTransparency = value } }
         refresh()
     }
 
@@ -118,9 +121,18 @@ final class MenuController: NSObject, NSMenuDelegate {
         headerItem.view = header
         menu.addItem(headerItem)
         menu.addItem(.separator())
-        let sliderItem = NSMenuItem()
-        sliderItem.view = transparencyView
-        menu.addItem(sliderItem)
+        transparencyDisclosureButton.target = self
+        transparencyDisclosureButton.action = #selector(toggleTransparencyDetails)
+        transparencyDisclosureButton.setFrameSize(NSSize(width: transparencyView.bounds.width,
+                                                         height: transparencyDisclosureButton.intrinsicContentSize.height))
+        let overallItem = NSMenuItem()
+        let disclosureItem = NSMenuItem()
+        for (item, view) in zip([overallItem, disclosureItem] + layerTransparencyItems,
+                                [transparencyView, transparencyDisclosureButton, contentTransparencyView, backgroundTransparencyView]) {
+            item.view = view
+            item.isHidden = layerTransparencyItems.contains(item)
+            menu.addItem(item)
+        }
         menu.addItem(.separator())
         for (index, slot) in ClockSlot.allCases.enumerated() {
             let item = makeItem(slot.title, action: #selector(selectClockSlot(_:)))
@@ -154,7 +166,10 @@ final class MenuController: NSObject, NSMenuDelegate {
 
     private func refresh() {
         guard lockItem != nil else { return }
+        transparencyView.title = settings.usesCustomTransparency ? "整体透明度 · 手动分层" : "整体透明度"
         transparencyView.update(settings.transparency)
+        contentTransparencyView.update(settings.contentTransparency)
+        backgroundTransparencyView.update(settings.backgroundTransparency)
         lockItem.state = settings.isLocked ? .on : .off
         visibilityItem.state = clockIsVisible ? .on : .off
         let date = Date()
@@ -177,6 +192,10 @@ final class MenuController: NSObject, NSMenuDelegate {
         onSettingsChanged?(settings)
     }
 
+    @objc private func toggleTransparencyDetails() {
+        transparencyDisclosureButton.isExpanded.toggle()
+        for item in layerTransparencyItems { item.isHidden = !transparencyDisclosureButton.isExpanded }
+    }
     @objc private func toggleLock() { change { $0.isLocked.toggle() } }
     @objc private func selectClockSlot(_ sender: NSMenuItem) {
         guard ClockSlot.allCases.indices.contains(sender.tag) else { return }
