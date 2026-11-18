@@ -107,6 +107,15 @@ enum RuntimeChecks {
         }
         let menuDisclosure = controller.transparencyDisclosureButton
         let settingsDisclosure = advanced.transparencyDisclosureButton
+        let disclosureMenuItem = controller.menu.items.first { $0.view === menuDisclosure }
+        check(disclosureMenuItem != nil && menuDisclosure.frame.width == controller.transparencyView.frame.width &&
+              settingsDisclosure.frame.width > 0 && settingsDisclosure.frame.width == advanced.transparencyRow.frame.width &&
+              [menuDisclosure, settingsDisclosure].allSatisfy { button in
+                  [1, button.bounds.midX, button.bounds.maxX - 1].allSatisfy { x in
+                      let point = NSPoint(x: x, y: button.bounds.midY)
+                      return button.hitTest(button.convert(point, to: button.superview)) === button
+                  }
+              }, "both disclosure buttons cover and receive clicks across the full row")
         check(layerItems.count == 2 && layerItems.allSatisfy(\.isHidden) && !menuDisclosure.isExpanded &&
               advanced.contentTransparencyRow.isHidden && advanced.backgroundTransparencyRow.isHidden && !settingsDisclosure.isExpanded,
               "both transparency controls start with their layer sliders collapsed")

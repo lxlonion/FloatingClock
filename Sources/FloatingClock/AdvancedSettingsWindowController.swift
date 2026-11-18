@@ -302,10 +302,8 @@ final class AdvancedSettingsWindowController: NSWindowController, NSWindowDelega
         visibilityRow.alignment = .centerY
         transparencyDisclosureButton.target = self
         transparencyDisclosureButton.action = #selector(toggleTransparencyDetails)
-        let disclosureRow = NSStackView(views: [transparencyDisclosureButton, NSView()])
-        disclosureRow.orientation = .horizontal
-        disclosureRow.alignment = .centerY
-        let general = stack([heading("常规"), transparencyRow, disclosureRow, contentTransparencyRow, backgroundTransparencyRow, lockButton, visibilityRow])
+        let general = stack([heading("常规"), transparencyRow, transparencyDisclosureButton,
+                             contentTransparencyRow, backgroundTransparencyRow, lockButton, visibilityRow])
         contentTransparencyRow.isHidden = true
         backgroundTransparencyRow.isHidden = true
 
