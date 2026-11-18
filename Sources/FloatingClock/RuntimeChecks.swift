@@ -105,28 +105,30 @@ enum RuntimeChecks {
         let layerItems = controller.menu.items.filter {
             $0.view === controller.contentTransparencyView || $0.view === controller.backgroundTransparencyView
         }
+        let layerViews = [controller.contentTransparencyView, controller.backgroundTransparencyView]
+        let layerRows = [advanced.contentTransparencyRow, advanced.backgroundTransparencyRow]
+        check(controller.transparencyView.slider.controlSize == .regular && advanced.transparencyRow.slider.controlSize == .regular &&
+              layerViews.allSatisfy { $0.slider.controlSize == .small } && layerRows.allSatisfy { $0.slider.controlSize == .small },
+              "overall transparency uses the regular native slider and both layers use small native sliders in both interfaces")
+        check(zip(layerViews, layerRows).allSatisfy { menuView, settingsRow in
+            let menuTitle = menuView.subviews.compactMap { $0 as? NSTextField }.first { $0.stringValue == menuView.title }
+            let settingsTitle = settingsRow.subviews.compactMap { $0 as? NSTextField }.first { $0.stringValue == settingsRow.title }
+            return menuTitle?.font?.pointSize == 11 && settingsTitle?.font?.pointSize == 11
+        }, "both interfaces use matching smaller labels for the layer sliders")
         let menuDisclosure = controller.transparencyDisclosureButton
-        let settingsDisclosure = advanced.transparencyDisclosureButton
         let disclosureMenuItem = controller.menu.items.first { $0.view === menuDisclosure }
         check(disclosureMenuItem != nil && menuDisclosure.frame.width == controller.transparencyView.frame.width &&
-              settingsDisclosure.frame.width > 0 && settingsDisclosure.frame.width == advanced.transparencyRow.frame.width &&
-              [menuDisclosure, settingsDisclosure].allSatisfy { button in
-                  [1, button.bounds.midX, button.bounds.maxX - 1].allSatisfy { x in
-                      let point = NSPoint(x: x, y: button.bounds.midY)
-                      return button.hitTest(button.convert(point, to: button.superview)) === button
-                  }
-              }, "both disclosure buttons cover and receive clicks across the full row")
+              [1, menuDisclosure.bounds.midX, menuDisclosure.bounds.maxX - 1].allSatisfy { x in
+                  let point = NSPoint(x: x, y: menuDisclosure.bounds.midY)
+                  return menuDisclosure.hitTest(menuDisclosure.convert(point, to: menuDisclosure.superview)) === menuDisclosure
+              }, "the menu disclosure button receives clicks across the full row")
         check(layerItems.count == 2 && layerItems.allSatisfy(\.isHidden) && !menuDisclosure.isExpanded &&
-              advanced.contentTransparencyRow.isHidden && advanced.backgroundTransparencyRow.isHidden && !settingsDisclosure.isExpanded,
-              "both transparency controls start with their layer sliders collapsed")
-        let collapsedHeight = scroll.documentView?.frame.height ?? 0
+              layerRows.allSatisfy { !$0.isHidden && $0.superview != nil && $0.frame.height > 0 },
+              "layer sliders start collapsed in the menu and laid out in advanced settings")
+        let settingsHeight = scroll.documentView?.frame.height ?? 0
         _ = menuDisclosure.sendAction(menuDisclosure.action, to: menuDisclosure.target)
-        settingsDisclosure.performClick(nil)
-        advanced.window?.contentView?.layoutSubtreeIfNeeded()
-        check(menuDisclosure.isExpanded && layerItems.allSatisfy { !$0.isHidden } &&
-              settingsDisclosure.isExpanded && !advanced.contentTransparencyRow.isHidden && !advanced.backgroundTransparencyRow.isHidden &&
-              (scroll.documentView?.frame.height ?? 0) > collapsedHeight + 130,
-              "expanding reveals both sliders and grows the settings scroll document")
+        check(menuDisclosure.isExpanded && layerItems.allSatisfy { !$0.isHidden },
+              "expanding the menu disclosure reveals both layer sliders")
 
         check(controller.clockSlotItems.count == 3 && advanced.clockSlotPopup.numberOfItems == 3 &&
               controller.clockSlotItems.map(\.state) == [.on, .off, .off],
@@ -245,12 +247,11 @@ enum RuntimeChecks {
               "adjusting background leaves content unchanged even when the background is more opaque")
         let manualSettings = store.load()
         _ = menuDisclosure.sendAction(menuDisclosure.action, to: menuDisclosure.target)
-        settingsDisclosure.performClick(nil)
         advanced.window?.contentView?.layoutSubtreeIfNeeded()
         check(!menuDisclosure.isExpanded && layerItems.allSatisfy(\.isHidden) &&
-              !settingsDisclosure.isExpanded && advanced.contentTransparencyRow.isHidden && advanced.backgroundTransparencyRow.isHidden &&
-              abs((scroll.documentView?.frame.height ?? 0) - collapsedHeight) < 1 && store.load() == manualSettings,
-              "collapsing removes the layer controls from layout and preserves the saved manual settings")
+              layerRows.allSatisfy { !$0.isHidden } &&
+              abs((scroll.documentView?.frame.height ?? 0) - settingsHeight) < 1 && store.load() == manualSettings,
+              "collapsing the menu preserves advanced settings layout and the saved manual settings")
         _ = advancedTransparency.sendAction(advancedTransparency.action, to: advancedTransparency.target)
         check(!store.load().usesCustomTransparency && controller.backgroundTransparencyView.slider.doubleValue == 31 &&
               controller.contentTransparencyView.slider.doubleValue == store.load().contentTransparency &&
@@ -286,6 +287,7 @@ enum RuntimeChecks {
             return own + view.subviews.flatMap { labels($0) }
         }
         let settingsLabels = advanced.window?.contentView.map { labels($0) } ?? []
+        check(!settingsLabels.contains("分层透明度"), "advanced settings has no layer disclosure button")
         check(!settingsLabels.contains("高级设置") && !settingsLabels.contains("退出漂浮时钟"),
               "settings body has no duplicate heading or quit control")
 

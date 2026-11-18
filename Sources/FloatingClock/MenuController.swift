@@ -15,19 +15,24 @@ final class PercentageMenuView: NSView {
         }
     }
 
-    init(title: String, help: String) {
+    init(title: String, controlSize: NSControl.ControlSize = .regular, help: String) {
         slider = NSSlider(value: 0, minValue: 0, maxValue: 90, target: nil, action: nil)
         titleLabel = NSTextField(labelWithString: title)
         valueLabel = NSTextField(labelWithString: "")
-        super.init(frame: CGRect(x: 0, y: 0, width: 286, height: 58))
-        titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        titleLabel.frame = CGRect(x: 20, y: 34, width: 184, height: 18)
+        let isSmall = controlSize == .small
+        let rowHeight: CGFloat = isSmall ? 50 : 58
+        let fontSize: CGFloat = isSmall ? 11 : 12
+        let labelY = rowHeight - 24
+        super.init(frame: CGRect(x: 0, y: 0, width: 286, height: rowHeight))
+        titleLabel.font = .systemFont(ofSize: fontSize, weight: .medium)
+        titleLabel.frame = CGRect(x: 20, y: labelY, width: 184, height: 18)
         addSubview(titleLabel)
-        valueLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        valueLabel.font = .monospacedDigitSystemFont(ofSize: fontSize, weight: .semibold)
         valueLabel.alignment = .right
-        valueLabel.frame = CGRect(x: 212, y: 34, width: 54, height: 18)
+        valueLabel.frame = CGRect(x: 212, y: labelY, width: 54, height: 18)
         addSubview(valueLabel)
-        slider.frame = CGRect(x: 18, y: 5, width: 250, height: 25)
+        slider.controlSize = controlSize
+        slider.frame = CGRect(x: 18, y: 5, width: 250, height: isSmall ? 20 : 25)
         slider.isContinuous = true
         slider.target = self
         slider.action = #selector(sliderChanged)
@@ -57,8 +62,10 @@ final class MenuController: NSObject, NSMenuDelegate {
     let quickMenu = NSMenu()
     let transparencyView = PercentageMenuView(title: "整体透明度", help: "联动背景和信息元素，中间档位的信息元素稍清晰。")
     let transparencyDisclosureButton = TransparencyDisclosureButton(horizontalInset: 20)
-    let contentTransparencyView = PercentageMenuView(title: "信息元素透明度", help: "单独调整刻度、指针、文字、分钟大字和计时器。")
-    let backgroundTransparencyView = PercentageMenuView(title: "背景透明度", help: "单独调整时钟底板和阴影。")
+    let contentTransparencyView = PercentageMenuView(
+        title: "信息元素透明度", controlSize: .small, help: "单独调整刻度、指针、文字、分钟大字和计时器。")
+    let backgroundTransparencyView = PercentageMenuView(
+        title: "背景透明度", controlSize: .small, help: "单独调整时钟底板和阴影。")
     private let layerTransparencyItems = [NSMenuItem(), NSMenuItem()]
     private var statusItem: NSStatusItem?
     private let subtitle = NSTextField(labelWithString: "始终置顶 · 拖动表盘移动")

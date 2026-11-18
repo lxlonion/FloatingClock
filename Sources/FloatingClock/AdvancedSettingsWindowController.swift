@@ -28,7 +28,7 @@ final class SettingsSliderRow: NSView {
     }
 
     init(title: String, value: Double, range: ClosedRange<Double>, suffix: String = "%",
-         lowText: String, highText: String, help: String) {
+         controlSize: NSControl.ControlSize = .regular, lowText: String, highText: String, help: String) {
         slider = NSSlider(value: value, minValue: range.lowerBound, maxValue: range.upperBound,
                           target: nil, action: nil)
         titleLabel = NSTextField(labelWithString: title)
@@ -36,14 +36,17 @@ final class SettingsSliderRow: NSView {
         super.init(frame: .zero)
         let low = NSTextField(labelWithString: lowText)
         let high = NSTextField(labelWithString: highText)
-        titleLabel.font = .systemFont(ofSize: 13)
-        valueLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+        let isSmall = controlSize == .small
+        let fontSize: CGFloat = isSmall ? 11 : 13
+        titleLabel.font = .systemFont(ofSize: fontSize)
+        valueLabel.font = .monospacedDigitSystemFont(ofSize: fontSize, weight: .medium)
         valueLabel.alignment = .right
         for label in [low, high] {
             label.font = .systemFont(ofSize: 11)
             label.textColor = .secondaryLabelColor
         }
         high.alignment = .right
+        slider.controlSize = controlSize
         slider.isContinuous = true
         slider.target = self
         slider.action = #selector(sliderChanged)
@@ -55,7 +58,7 @@ final class SettingsSliderRow: NSView {
             addSubview(view)
         }
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 72),
+            heightAnchor.constraint(equalToConstant: isSmall ? 62 : 72),
             titleLabel.topAnchor.constraint(equalTo: topAnchor),
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: valueLabel.leadingAnchor, constant: -8),
@@ -227,12 +230,11 @@ final class AdvancedSettingsWindowController: NSWindowController, NSWindowDelega
     let transparencyRow = SettingsSliderRow(
         title: "整体透明度", value: 20, range: 0...90,
         lowText: "0% · 不透明", highText: "90% · 最透明", help: "重新联动背景和信息元素。中间档位的信息元素稍清晰，滑块两端使用相同透明度。")
-    let transparencyDisclosureButton = TransparencyDisclosureButton()
     let contentTransparencyRow = SettingsSliderRow(
-        title: "信息元素透明度", value: 20, range: 0...90,
+        title: "信息元素透明度", value: 20, range: 0...90, controlSize: .small,
         lowText: "0% · 不透明", highText: "90% · 最透明", help: "单独调整刻度、指针、文字、分钟大字和计时器。")
     let backgroundTransparencyRow = SettingsSliderRow(
-        title: "背景透明度", value: 20, range: 0...90,
+        title: "背景透明度", value: 20, range: 0...90, controlSize: .small,
         lowText: "0% · 不透明", highText: "90% · 最透明", help: "单独调整时钟底板和阴影。")
     let faceSizeRow = SettingsSliderRow(
         title: "时钟大小", value: Double(ClockLayout.minimumFaceSize), range: Double(ClockLayout.minimumFaceSize)...Double(ClockLayout.maximumFaceSize), suffix: "",
@@ -300,12 +302,8 @@ final class AdvancedSettingsWindowController: NSWindowController, NSWindowDelega
         let visibilityRow = NSStackView(views: [visibilityButton, NSView(), moveToScreenButton])
         visibilityRow.orientation = .horizontal
         visibilityRow.alignment = .centerY
-        transparencyDisclosureButton.target = self
-        transparencyDisclosureButton.action = #selector(toggleTransparencyDetails)
-        let general = stack([heading("常规"), transparencyRow, transparencyDisclosureButton,
+        let general = stack([heading("常规"), transparencyRow,
                              contentTransparencyRow, backgroundTransparencyRow, lockButton, visibilityRow])
-        contentTransparencyRow.isHidden = true
-        backgroundTransparencyRow.isHidden = true
 
         clockSlotPopup.addItems(withTitles: ClockSlot.allCases.map { settings.title(for: $0) })
         clockSlotPopup.target = self
@@ -484,11 +482,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSWindowDelega
         onSettingsChanged?(settings)
     }
 
-    @objc private func toggleTransparencyDetails() {
-        transparencyDisclosureButton.isExpanded.toggle()
-        contentTransparencyRow.isHidden = !transparencyDisclosureButton.isExpanded
-        backgroundTransparencyRow.isHidden = !transparencyDisclosureButton.isExpanded
-    }
     @objc private func styleChanged() { change { $0.style = ClockStyle.allCases[stylePopup.indexOfSelectedItem] } }
     @objc private func clockSlotChanged() { change { $0.selectedClockSlot = ClockSlot.allCases[clockSlotPopup.indexOfSelectedItem] } }
     @objc private func appearanceChanged() { change { $0.appearance = ClockAppearance.allCases[appearancePopup.indexOfSelectedItem] } }
