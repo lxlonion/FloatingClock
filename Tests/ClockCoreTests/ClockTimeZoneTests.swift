@@ -27,6 +27,18 @@ final class ClockTimeZoneTests: XCTestCase {
         }
     }
 
+    func testMenuTitlesShowStandardOffsetsAndMarkSeasonalRules() {
+        let settings = ClockSettings()
+        let shanghai = TimeZone(identifier: "Asia/Shanghai")!
+        let newYork = TimeZone(identifier: "America/New_York")!
+        for now in [date("2026-01-15T12:00:00Z"), date("2026-07-15T12:00:00Z")] {
+            XCTAssertEqual(settings.menuTitle(for: .system, at: now, systemTimeZone: shanghai), "槽位 1 · UTC+08:00")
+            XCTAssertEqual(settings.menuTitle(for: .system, at: now, systemTimeZone: newYork), "槽位 1 · UTC−05:00 - 夏令时")
+            XCTAssertEqual(settings.menuTitle(for: .second, at: now), "槽位 2 · UTC−08:00")
+            XCTAssertEqual(settings.menuTitle(for: .third, at: now), "槽位 3 · UTC−05:00 - 夏令时")
+        }
+    }
+
     func testPacificDefaultIsStandardTimeAllYearAndCanEnableDST() {
         var settings = ClockSettings()
         settings.selectedClockSlot = .second

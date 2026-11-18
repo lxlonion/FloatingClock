@@ -79,6 +79,20 @@ public struct ClockSettings: Codable, Equatable {
         return "\(slot.title) · \(name)"
     }
 
+    public func menuTitle(for slot: ClockSlot, at date: Date = Date(), systemTimeZone: TimeZone = .autoupdatingCurrent) -> String {
+        let zoneSettings: ClockTimeZoneSettings
+        switch slot {
+        case .system:
+            zoneSettings = ClockTimeZoneSettings(identifier: systemTimeZone.identifier, usesDaylightSavingTime: true)
+        case .second: zoneSettings = secondClockTimeZone
+        case .third: zoneSettings = thirdClockTimeZone
+        }
+        let option = ClockTimeZoneCatalog.shared.option(for: zoneSettings, at: date)
+        let name = option?.title(includingPlaceNames: false)
+            ?? ClockTimeZoneCatalog.offsetTitle(zoneSettings.timeZone(at: date).secondsFromGMT(for: date))
+        return "\(slot.title) · \(name)"
+    }
+
     public func calendar(at date: Date, systemCalendar: Calendar = .autoupdatingCurrent) -> Calendar {
         var calendar = systemCalendar
         switch selectedClockSlot {

@@ -108,8 +108,18 @@ enum RuntimeChecks {
         let catalog = ClockTimeZoneCatalog.shared
         let zonePopup = advanced.secondTimeZoneRow.timeZonePopup
         let newYorkOption = catalog.option(for: "America/New_York")!
-        check(zonePopup.title == "UTC−08:00" && advanced.thirdTimeZoneRow.timeZonePopup.title == newYorkOption.title,
-              "settings show a fixed Pacific offset and a New York choice that follows local time")
+        check(controller.clockSlotItems[0].title == ClockSettings().menuTitle(for: .system) &&
+              controller.clockSlotItems[1].title == "槽位 2 · UTC−08:00" &&
+              controller.clockSlotItems[2].title == "槽位 3 · UTC−05:00 - 夏令时" &&
+              advanced.clockSlotPopup.item(at: 2)?.title == "槽位 3 · \(newYorkOption.title)" &&
+              zonePopup.title == "UTC−08:00" && advanced.thirdTimeZoneRow.timeZonePopup.title == newYorkOption.title,
+              "the status menu shows compact UTC labels and advanced settings retain regional names")
+        let statusMenuWidth = controller.menu.size.width
+        controller.clockSlotItems.forEach { $0.isHidden = true }
+        let statusMenuWidthWithoutSlots = controller.menu.size.width
+        controller.clockSlotItems.forEach { $0.isHidden = false }
+        check(statusMenuWidthWithoutSlots >= controller.transparencyView.frame.width && statusMenuWidth == statusMenuWidthWithoutSlots,
+              "the compact slot labels fit within the existing status menu width")
         let firstLevel = zonePopup.menu?.items.filter { !$0.isHidden && !$0.isSeparatorItem && $0.submenu == nil }
         check(firstLevel?.map(\.title) == catalog.commonOptions.map(\.title) &&
               zonePopup.menu?.item(withTitle: "固定 UTC 偏移")?.submenu?.items.map(\.title) == catalog.fixedOptions.map(\.title),
@@ -144,7 +154,7 @@ enum RuntimeChecks {
         let pacificOption = catalog.option(for: ClockTimeZoneSettings.pacific.identifier)!
         chooseTimeZone(pacificOption, in: zonePopup)
         check(panel.face.settings.secondClockTimeZone.usesDaylightSavingTime && store.load().secondClockTimeZone.usesDaylightSavingTime &&
-              controller.clockSlotItems[1].title.contains(pacificOption.title) && store.load().thirdClockTimeZone == .newYork,
+              controller.clockSlotItems[1].title == "槽位 2 · UTC−08:00 - 夏令时" && store.load().thirdClockTimeZone == .newYork,
               "selecting Los Angeles from common choices updates the clock and leaves the third slot unchanged")
         let fixedEastern = catalog.fixedOptions.first { $0.standardOffset == -5 * 3600 }!
         chooseTimeZone(fixedEastern, in: advanced.thirdTimeZoneRow.timeZonePopup, submenu: "固定 UTC 偏移")
@@ -155,7 +165,7 @@ enum RuntimeChecks {
         let kathmanduOption = catalog.option(for: "Asia/Kathmandu")!
         chooseTimeZone(kathmanduOption, in: zonePopup, submenu: "亚洲")
         check(store.load().secondClockTimeZone == kathmanduOption.settings && panel.face.settings.secondClockTimeZone == kathmanduOption.settings &&
-              controller.clockSlotItems[1].title.contains(kathmanduOption.title) &&
+              controller.clockSlotItems[1].title == "槽位 2 · UTC+05:45" &&
               advanced.clockSlotPopup.titleOfSelectedItem?.contains(kathmanduOption.title) == true,
               "a fractional regional choice updates the face, persistence and both slot labels")
         advanced.close()

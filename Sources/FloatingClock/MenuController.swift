@@ -102,7 +102,7 @@ final class MenuController: NSObject, NSMenuDelegate {
         refresh()
     }
 
-    func menuWillOpen(_ menu: NSMenu) { refresh() }
+    func menuNeedsUpdate(_ menu: NSMenu) { refresh() }
 
     private func buildMenu() {
         let header = NSView(frame: CGRect(x: 0, y: 0, width: 286, height: 53))
@@ -123,8 +123,9 @@ final class MenuController: NSObject, NSMenuDelegate {
         menu.addItem(sliderItem)
         menu.addItem(.separator())
         for (index, slot) in ClockSlot.allCases.enumerated() {
-            let item = makeItem(settings.title(for: slot), action: #selector(selectClockSlot(_:)))
+            let item = makeItem(slot.title, action: #selector(selectClockSlot(_:)))
             item.tag = index
+            if slot == .system { item.toolTip = "跟随系统时区" }
             clockSlotItems.append(item)
             menu.addItem(item)
         }
@@ -156,8 +157,9 @@ final class MenuController: NSObject, NSMenuDelegate {
         transparencyView.update(settings.transparency)
         lockItem.state = settings.isLocked ? .on : .off
         visibilityItem.state = clockIsVisible ? .on : .off
+        let date = Date()
         for (item, slot) in zip(clockSlotItems, ClockSlot.allCases) {
-            item.title = settings.title(for: slot)
+            item.title = settings.menuTitle(for: slot, at: date)
             item.state = settings.selectedClockSlot == slot ? .on : .off
         }
         if quickItems.count == 3 {

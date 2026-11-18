@@ -86,9 +86,11 @@ public struct ClockTimeZoneOption: Equatable {
     public let help: String
     fileprivate let placeNames: [String]
 
-    public var title: String {
+    public var title: String { title(includingPlaceNames: true) }
+
+    public func title(includingPlaceNames: Bool) -> String {
         let offset = ClockTimeZoneCatalog.offsetTitle(standardOffset)
-        let places = placeNames.isEmpty ? "" : " · " + placeNames.joined(separator: "／")
+        let places = includingPlaceNames && !placeNames.isEmpty ? " · " + placeNames.joined(separator: "／") : ""
         return offset + places + (hasDaylightSavingTime ? " - 夏令时" : "")
     }
 
