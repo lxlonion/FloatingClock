@@ -102,6 +102,22 @@ enum RuntimeChecks {
         let scroll = advanced.settingsScrollView
         check(abs((scroll.documentView?.frame.width ?? 0) - scroll.contentView.bounds.width) < 1,
               "settings scroll content fits the viewport without clipping controls on the right")
+        let layerItems = controller.menu.items.filter {
+            $0.view === controller.contentTransparencyView || $0.view === controller.backgroundTransparencyView
+        }
+        let menuDisclosure = controller.transparencyDisclosureButton
+        let settingsDisclosure = advanced.transparencyDisclosureButton
+        check(layerItems.count == 2 && layerItems.allSatisfy(\.isHidden) && !menuDisclosure.isExpanded &&
+              advanced.contentTransparencyRow.isHidden && advanced.backgroundTransparencyRow.isHidden && !settingsDisclosure.isExpanded,
+              "both transparency controls start with their layer sliders collapsed")
+        let collapsedHeight = scroll.documentView?.frame.height ?? 0
+        _ = menuDisclosure.sendAction(menuDisclosure.action, to: menuDisclosure.target)
+        settingsDisclosure.performClick(nil)
+        advanced.window?.contentView?.layoutSubtreeIfNeeded()
+        check(menuDisclosure.isExpanded && layerItems.allSatisfy { !$0.isHidden } &&
+              settingsDisclosure.isExpanded && !advanced.contentTransparencyRow.isHidden && !advanced.backgroundTransparencyRow.isHidden &&
+              (scroll.documentView?.frame.height ?? 0) > collapsedHeight + 130,
+              "expanding reveals both sliders and grows the settings scroll document")
 
         check(controller.clockSlotItems.count == 3 && advanced.clockSlotPopup.numberOfItems == 3 &&
               controller.clockSlotItems.map(\.state) == [.on, .off, .off],
@@ -208,6 +224,14 @@ enum RuntimeChecks {
               advanced.backgroundTransparencyRow.slider.doubleValue == 50 && advanced.transparencyRow.slider.doubleValue == 31 &&
               abs(panel.alphaValue * panel.timerTray.alphaValue - 0.30) < 0.001 && abs(panel.alphaValue - 0.50) < 0.001,
               "adjusting background leaves content unchanged even when the background is more opaque")
+        let manualSettings = store.load()
+        _ = menuDisclosure.sendAction(menuDisclosure.action, to: menuDisclosure.target)
+        settingsDisclosure.performClick(nil)
+        advanced.window?.contentView?.layoutSubtreeIfNeeded()
+        check(!menuDisclosure.isExpanded && layerItems.allSatisfy(\.isHidden) &&
+              !settingsDisclosure.isExpanded && advanced.contentTransparencyRow.isHidden && advanced.backgroundTransparencyRow.isHidden &&
+              abs((scroll.documentView?.frame.height ?? 0) - collapsedHeight) < 1 && store.load() == manualSettings,
+              "collapsing removes the layer controls from layout and preserves the saved manual settings")
         _ = advancedTransparency.sendAction(advancedTransparency.action, to: advancedTransparency.target)
         check(!store.load().usesCustomTransparency && controller.backgroundTransparencyView.slider.doubleValue == 31 &&
               controller.contentTransparencyView.slider.doubleValue == store.load().contentTransparency &&

@@ -227,6 +227,7 @@ final class AdvancedSettingsWindowController: NSWindowController, NSWindowDelega
     let transparencyRow = SettingsSliderRow(
         title: "整体透明度", value: 20, range: 0...90,
         lowText: "0% · 不透明", highText: "90% · 最透明", help: "重新联动背景和信息元素。中间档位的信息元素稍清晰，滑块两端使用相同透明度。")
+    let transparencyDisclosureButton = TransparencyDisclosureButton()
     let contentTransparencyRow = SettingsSliderRow(
         title: "信息元素透明度", value: 20, range: 0...90,
         lowText: "0% · 不透明", highText: "90% · 最透明", help: "单独调整刻度、指针、文字、分钟大字和计时器。")
@@ -299,7 +300,14 @@ final class AdvancedSettingsWindowController: NSWindowController, NSWindowDelega
         let visibilityRow = NSStackView(views: [visibilityButton, NSView(), moveToScreenButton])
         visibilityRow.orientation = .horizontal
         visibilityRow.alignment = .centerY
-        let general = stack([heading("常规"), transparencyRow, contentTransparencyRow, backgroundTransparencyRow, lockButton, visibilityRow])
+        transparencyDisclosureButton.target = self
+        transparencyDisclosureButton.action = #selector(toggleTransparencyDetails)
+        let disclosureRow = NSStackView(views: [transparencyDisclosureButton, NSView()])
+        disclosureRow.orientation = .horizontal
+        disclosureRow.alignment = .centerY
+        let general = stack([heading("常规"), transparencyRow, disclosureRow, contentTransparencyRow, backgroundTransparencyRow, lockButton, visibilityRow])
+        contentTransparencyRow.isHidden = true
+        backgroundTransparencyRow.isHidden = true
 
         clockSlotPopup.addItems(withTitles: ClockSlot.allCases.map { settings.title(for: $0) })
         clockSlotPopup.target = self
@@ -478,6 +486,11 @@ final class AdvancedSettingsWindowController: NSWindowController, NSWindowDelega
         onSettingsChanged?(settings)
     }
 
+    @objc private func toggleTransparencyDetails() {
+        transparencyDisclosureButton.isExpanded.toggle()
+        contentTransparencyRow.isHidden = !transparencyDisclosureButton.isExpanded
+        backgroundTransparencyRow.isHidden = !transparencyDisclosureButton.isExpanded
+    }
     @objc private func styleChanged() { change { $0.style = ClockStyle.allCases[stylePopup.indexOfSelectedItem] } }
     @objc private func clockSlotChanged() { change { $0.selectedClockSlot = ClockSlot.allCases[clockSlotPopup.indexOfSelectedItem] } }
     @objc private func appearanceChanged() { change { $0.appearance = ClockAppearance.allCases[appearancePopup.indexOfSelectedItem] } }

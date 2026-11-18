@@ -56,8 +56,10 @@ final class MenuController: NSObject, NSMenuDelegate {
     let menu = NSMenu()
     let quickMenu = NSMenu()
     let transparencyView = PercentageMenuView(title: "整体透明度", help: "联动背景和信息元素，中间档位的信息元素稍清晰。")
+    let transparencyDisclosureButton = TransparencyDisclosureButton()
     let contentTransparencyView = PercentageMenuView(title: "信息元素透明度", help: "单独调整刻度、指针、文字、分钟大字和计时器。")
     let backgroundTransparencyView = PercentageMenuView(title: "背景透明度", help: "单独调整时钟底板和阴影。")
+    private let layerTransparencyItems = [NSMenuItem(), NSMenuItem()]
     private var statusItem: NSStatusItem?
     private let subtitle = NSTextField(labelWithString: "始终置顶 · 拖动表盘移动")
     private var lockItem: NSMenuItem!
@@ -119,9 +121,18 @@ final class MenuController: NSObject, NSMenuDelegate {
         headerItem.view = header
         menu.addItem(headerItem)
         menu.addItem(.separator())
-        for view in [transparencyView, contentTransparencyView, backgroundTransparencyView] {
-            let item = NSMenuItem()
+        let disclosureView = NSView(frame: CGRect(x: 0, y: 0, width: 286, height: 29))
+        transparencyDisclosureButton.target = self
+        transparencyDisclosureButton.action = #selector(toggleTransparencyDetails)
+        transparencyDisclosureButton.sizeToFit()
+        transparencyDisclosureButton.frame.origin = CGPoint(x: 18, y: (disclosureView.bounds.height - transparencyDisclosureButton.frame.height) / 2)
+        disclosureView.addSubview(transparencyDisclosureButton)
+        let overallItem = NSMenuItem()
+        let disclosureItem = NSMenuItem()
+        for (item, view) in zip([overallItem, disclosureItem] + layerTransparencyItems,
+                                [transparencyView, disclosureView, contentTransparencyView, backgroundTransparencyView]) {
             item.view = view
+            item.isHidden = layerTransparencyItems.contains(item)
             menu.addItem(item)
         }
         menu.addItem(.separator())
@@ -181,6 +192,10 @@ final class MenuController: NSObject, NSMenuDelegate {
         onSettingsChanged?(settings)
     }
 
+    @objc private func toggleTransparencyDetails() {
+        transparencyDisclosureButton.isExpanded.toggle()
+        for item in layerTransparencyItems { item.isHidden = !transparencyDisclosureButton.isExpanded }
+    }
     @objc private func toggleLock() { change { $0.isLocked.toggle() } }
     @objc private func selectClockSlot(_ sender: NSMenuItem) {
         guard ClockSlot.allCases.indices.contains(sender.tag) else { return }
