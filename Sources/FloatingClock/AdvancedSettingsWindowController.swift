@@ -82,19 +82,19 @@ final class ClockTimeZoneRow: NSView {
     let timeZonePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     let daylightSavingButton = NSButton(checkboxWithTitle: "自动应用夏令时", target: nil, action: nil)
     var onChange: ((ClockTimeZoneSettings) -> Void)?
+    private let catalog = ClockTimeZoneCatalog.shared
+    private var currentSettings = ClockTimeZoneSettings.pacific
 
     init(slot: ClockSlot) {
         super.init(frame: .zero)
-        let common = ["America/Los_Angeles", "America/New_York", "Asia/Shanghai", "Asia/Tokyo", "Europe/London", "UTC"]
-        let identifiers = common + TimeZone.knownTimeZoneIdentifiers.filter { !common.contains($0) }.sorted()
-        for identifier in identifiers { addTimeZone(identifier) }
+        for option in catalog.options { addTimeZone(option) }
         timeZonePopup.target = self
-        timeZonePopup.action = #selector(changed)
+        timeZonePopup.action = #selector(timeZoneChanged)
         timeZonePopup.setAccessibilityLabel("\(slot.title)时区")
         timeZonePopup.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         (timeZonePopup.cell as? NSPopUpButtonCell)?.lineBreakMode = .byTruncatingMiddle
         daylightSavingButton.target = self
-        daylightSavingButton.action = #selector(changed)
+        daylightSavingButton.action = #selector(daylightSavingChanged)
         daylightSavingButton.setAccessibilityLabel("\(slot.title)自动应用夏令时")
         daylightSavingButton.toolTip = "勾选后按所选地区的规则自动切换夏令时；不勾选则全年使用标准时间。没有夏令时的地区不受影响。"
         let label = NSTextField(labelWithString: slot.title)
@@ -120,22 +120,39 @@ final class ClockTimeZoneRow: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    private func addTimeZone(_ identifier: String) {
-        timeZonePopup.addItem(withTitle: ClockTimeZoneSettings.selectionTitle(for: identifier))
-        timeZonePopup.lastItem?.representedObject = identifier
+    private func addTimeZone(_ option: ClockTimeZoneOption) {
+        timeZonePopup.addItem(withTitle: option.title)
+        timeZonePopup.lastItem?.representedObject = option.identifier
+        timeZonePopup.lastItem?.toolTip = option.help
     }
 
     func update(_ settings: ClockTimeZoneSettings) {
-        if !timeZonePopup.itemArray.contains(where: { $0.representedObject as? String == settings.identifier }) {
-            addTimeZone(settings.identifier)
+        currentSettings = settings
+        guard let option = catalog.option(for: settings.identifier) else { return }
+        if !timeZonePopup.itemArray.contains(where: { $0.representedObject as? String == option.identifier }) {
+            addTimeZone(option)
         }
-        timeZonePopup.select(timeZonePopup.itemArray.first { $0.representedObject as? String == settings.identifier })
-        daylightSavingButton.state = settings.usesDaylightSavingTime ? .on : .off
+        timeZonePopup.select(timeZonePopup.itemArray.first { $0.representedObject as? String == option.identifier })
+        timeZonePopup.toolTip = option.help
+        daylightSavingButton.isEnabled = option.hasDaylightSavingTime
+        daylightSavingButton.state = option.hasDaylightSavingTime && settings.usesDaylightSavingTime ? .on : .off
+        daylightSavingButton.toolTip = option.hasDaylightSavingTime ?
+            "勾选后按此选项的规则自动切换；不勾选则全年使用前面 UTC 偏移对应的标准时间。" : "此选项全年使用固定 UTC 偏移，没有夏令时。"
     }
 
-    @objc private func changed() {
-        guard let identifier = timeZonePopup.selectedItem?.representedObject as? String else { return }
-        onChange?(ClockTimeZoneSettings(identifier: identifier, usesDaylightSavingTime: daylightSavingButton.state == .on))
+    @objc private func timeZoneChanged() {
+        guard let identifier = timeZonePopup.selectedItem?.representedObject as? String,
+              let option = catalog.option(for: identifier) else { return }
+        // Selecting a seasonal option opts into its rules; saved choices and
+        // explicitly disabled DST are retained when merely refreshing controls.
+        currentSettings = ClockTimeZoneSettings(identifier: identifier, usesDaylightSavingTime: option.hasDaylightSavingTime)
+        update(currentSettings)
+        onChange?(currentSettings)
+    }
+
+    @objc private func daylightSavingChanged() {
+        currentSettings.usesDaylightSavingTime = daylightSavingButton.state == .on
+        onChange?(currentSettings)
     }
 }
 
@@ -224,7 +241,8 @@ final class AdvancedSettingsWindowController: NSWindowController {
             choiceRow("当前槽位", control: clockSlotPopup),
             note("槽位 1 · 系统时区，自动跟随 macOS。"),
             secondTimeZoneRow, thirdTimeZoneRow,
-            note("勾选夏令时：按地区规则自动切换；不勾选：全年标准时间。")
+            note("按 UTC 标准偏移合并；夏令时规则不同的选项单独列出。"),
+            note("勾选夏令时自动切换；不勾选则全年使用标准时间。")
         ])
 
         stylePopup.addItems(withTitles: ClockStyle.allCases.map(\.menuTitle))

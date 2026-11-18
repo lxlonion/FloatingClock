@@ -40,20 +40,14 @@ public struct ClockTimeZoneSettings: Codable, Equatable {
     }
 
     public var displayName: String {
-        switch identifier {
-        case "America/Los_Angeles": return usesDaylightSavingTime ? "太平洋时间" : "太平洋标准时间"
-        case "America/New_York": return usesDaylightSavingTime ? "纽约时间" : "纽约标准时间"
-        default: return Self.selectionTitle(for: identifier)
+        if usesDaylightSavingTime, let option = ClockTimeZoneCatalog.shared.option(for: identifier), option.hasDaylightSavingTime {
+            return option.title
         }
+        let zone = timeZone(at: Date())
+        return "\(ClockTimeZoneCatalog.offsetTitle(zone.secondsFromGMT())) · 标准时间"
     }
 
     public static func selectionTitle(for identifier: String) -> String {
-        let name: String?
-        switch identifier {
-        case "America/Los_Angeles": name = "太平洋时间（洛杉矶）"
-        case "America/New_York": name = "纽约时间"
-        default: name = TimeZone(identifier: identifier)?.localizedName(for: .generic, locale: Locale(identifier: "zh_Hans_CN"))
-        }
-        return name.map { "\($0) · \(identifier)" } ?? identifier
+        ClockTimeZoneCatalog.shared.option(for: identifier)?.title ?? identifier
     }
 }
