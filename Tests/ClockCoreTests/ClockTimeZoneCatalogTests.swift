@@ -114,6 +114,7 @@ final class ClockTimeZoneCatalogTests: XCTestCase {
         var saved = ClockTimeZoneSettings(identifier: "US/Pacific", usesDaylightSavingTime: false)
         XCTAssertEqual(catalog.option(for: saved, at: referenceDate)?.title, "UTC−08:00")
         saved.usesDaylightSavingTime = true
-        XCTAssertEqual(catalog.option(for: saved, at: referenceDate)?.title, "UTC−08:00 · 洛杉矶 - 夏令时")
+        let losAngeles = try XCTUnwrap(catalog.option(for: "America/Los_Angeles"))
+        XCTAssertEqual(catalog.option(for: saved, at: referenceDate), losAngeles)
     }
 }
