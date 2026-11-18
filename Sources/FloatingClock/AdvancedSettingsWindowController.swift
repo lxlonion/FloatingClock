@@ -28,24 +28,16 @@ final class SettingsSliderRow: NSView {
     }
 
     init(title: String, value: Double, range: ClosedRange<Double>, suffix: String = "%",
-         controlSize: NSControl.ControlSize = .regular, lowText: String, highText: String, help: String) {
+         controlSize: NSControl.ControlSize = .regular, rangeLabels: (low: String, high: String)? = nil, help: String) {
         slider = NSSlider(value: value, minValue: range.lowerBound, maxValue: range.upperBound,
                           target: nil, action: nil)
         titleLabel = NSTextField(labelWithString: title)
         self.suffix = suffix
         super.init(frame: .zero)
-        let low = NSTextField(labelWithString: lowText)
-        let high = NSTextField(labelWithString: highText)
-        let isSmall = controlSize == .small
-        let fontSize: CGFloat = isSmall ? 11 : 13
+        let fontSize: CGFloat = controlSize == .small ? 11 : 13
         titleLabel.font = .systemFont(ofSize: fontSize)
         valueLabel.font = .monospacedDigitSystemFont(ofSize: fontSize, weight: .medium)
         valueLabel.alignment = .right
-        for label in [low, high] {
-            label.font = .systemFont(ofSize: 11)
-            label.textColor = .secondaryLabelColor
-        }
-        high.alignment = .right
         slider.controlSize = controlSize
         slider.isContinuous = true
         slider.target = self
@@ -53,12 +45,11 @@ final class SettingsSliderRow: NSView {
         slider.setAccessibilityLabel(title)
         slider.setAccessibilityHelp(help)
         toolTip = help
-        for view in [titleLabel, valueLabel, slider, low, high] {
+        for view in [titleLabel, valueLabel, slider] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: isSmall ? 62 : 72),
             titleLabel.topAnchor.constraint(equalTo: topAnchor),
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: valueLabel.leadingAnchor, constant: -8),
@@ -67,12 +58,30 @@ final class SettingsSliderRow: NSView {
             valueLabel.widthAnchor.constraint(equalToConstant: 70),
             slider.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 3),
             slider.leadingAnchor.constraint(equalTo: leadingAnchor),
-            slider.trailingAnchor.constraint(equalTo: trailingAnchor),
-            low.topAnchor.constraint(equalTo: slider.bottomAnchor, constant: 1),
-            low.leadingAnchor.constraint(equalTo: leadingAnchor),
-            high.firstBaselineAnchor.constraint(equalTo: low.firstBaselineAnchor),
-            high.trailingAnchor.constraint(equalTo: trailingAnchor)
+            slider.trailingAnchor.constraint(equalTo: trailingAnchor)
         ])
+        if let rangeLabels {
+            let low = NSTextField(labelWithString: rangeLabels.low)
+            let high = NSTextField(labelWithString: rangeLabels.high)
+            high.alignment = .right
+            for label in [low, high] {
+                label.font = .systemFont(ofSize: 11)
+                label.textColor = .secondaryLabelColor
+                label.translatesAutoresizingMaskIntoConstraints = false
+                addSubview(label)
+            }
+            NSLayoutConstraint.activate([
+                heightAnchor.constraint(greaterThanOrEqualToConstant: 72),
+                low.topAnchor.constraint(equalTo: slider.bottomAnchor, constant: 1),
+                low.leadingAnchor.constraint(equalTo: leadingAnchor),
+                low.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
+                high.firstBaselineAnchor.constraint(equalTo: low.firstBaselineAnchor),
+                high.trailingAnchor.constraint(equalTo: trailingAnchor)
+            ])
+        } else {
+            // AppKit can draw below the slider's alignment rect.
+            slider.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -slider.alignmentRectInsets.bottom).isActive = true
+        }
         update(value)
     }
 
@@ -216,7 +225,6 @@ final class ClockTimeZoneRow: NSView {
 final class AdvancedSettingsWindowController: NSWindowController, NSWindowDelegate {
     let settingsScrollView = NSScrollView()
     let lockButton = NSButton(checkboxWithTitle: "锁定位置（鼠标穿透）", target: nil, action: nil)
-    let visibilityButton = NSButton(checkboxWithTitle: "显示时钟", target: nil, action: nil)
     let moveToScreenButton = NSButton(title: "移回当前屏幕", target: nil, action: nil)
     let stylePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     let appearancePopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -229,26 +237,24 @@ final class AdvancedSettingsWindowController: NSWindowController, NSWindowDelega
     let minuteNumeralsButton = NSButton(checkboxWithTitle: "显示分钟大字", target: nil, action: nil)
     let transparencyRow = SettingsSliderRow(
         title: "整体透明度", value: 20, range: 0...90,
-        lowText: "0% · 不透明", highText: "90% · 最透明", help: "重新联动背景和信息元素。中间档位的信息元素稍清晰，滑块两端使用相同透明度。")
+        help: "重新联动背景和信息元素。中间档位的信息元素稍清晰，滑块两端使用相同透明度。")
     let contentTransparencyRow = SettingsSliderRow(
         title: "信息元素透明度", value: 20, range: 0...90, controlSize: .small,
-        lowText: "0% · 不透明", highText: "90% · 最透明", help: "单独调整刻度、指针、文字、分钟大字和计时器。")
+        help: "单独调整刻度、指针、文字、分钟大字和计时器。")
     let backgroundTransparencyRow = SettingsSliderRow(
         title: "背景透明度", value: 20, range: 0...90, controlSize: .small,
-        lowText: "0% · 不透明", highText: "90% · 最透明", help: "单独调整时钟底板和阴影。")
+        help: "单独调整时钟底板和阴影。")
     let faceSizeRow = SettingsSliderRow(
         title: "时钟大小", value: Double(ClockLayout.minimumFaceSize), range: Double(ClockLayout.minimumFaceSize)...Double(ClockLayout.maximumFaceSize), suffix: "",
-        lowText: "260 · 小号", highText: "420 · 大号", help: "调整整个表盘的大小，最小尺寸与计时区宽度对齐。")
+        rangeLabels: ("260 · 小号", "420 · 大号"), help: "调整整个表盘的大小，最小尺寸与计时区宽度对齐。")
     let minuteOpacityRow = SettingsSliderRow(
         title: "大字浓度", value: 40, range: 0...100,
-        lowText: "0% · 透明", highText: "100% · 实色", help: "只改变分钟大字的浓度，不影响背景透明度。")
+        rangeLabels: ("0% · 透明", "100% · 实色"), help: "只改变分钟大字的浓度，不影响背景透明度。")
     let minuteSizeRow = SettingsSliderRow(
         title: "大字大小", value: 100, range: 40...100,
-        lowText: "40% · 较小", highText: "100% · 最大", help: "相对于表盘内可用空间的大小，数字始终居中。")
+        rangeLabels: ("40% · 较小", "100% · 最大"), help: "相对于表盘内可用空间的大小，数字始终居中。")
     var settings: ClockSettings { didSet { refresh() } }
-    var clockIsVisible = true { didSet { refresh() } }
     var onSettingsChanged: ((ClockSettings) -> Void)?
-    var onToggleVisibility: (() -> Void)?
     var onMoveToCurrentScreen: (() -> Void)?
     private var timeZoneStatusTimer: Timer?
 
@@ -294,16 +300,16 @@ final class AdvancedSettingsWindowController: NSWindowController, NSWindowDelega
 
         lockButton.target = self
         lockButton.action = #selector(lockChanged)
-        visibilityButton.target = self
-        visibilityButton.action = #selector(visibilityChanged)
         moveToScreenButton.target = self
         moveToScreenButton.action = #selector(moveToCurrentScreen)
         moveToScreenButton.bezelStyle = .rounded
-        let visibilityRow = NSStackView(views: [visibilityButton, NSView(), moveToScreenButton])
-        visibilityRow.orientation = .horizontal
-        visibilityRow.alignment = .centerY
-        let general = stack([heading("常规"), transparencyRow,
-                             contentTransparencyRow, backgroundTransparencyRow, lockButton, visibilityRow])
+        let clockActions = NSStackView(views: [lockButton, NSView(), moveToScreenButton])
+        clockActions.orientation = .horizontal
+        clockActions.alignment = .centerY
+        let transparency = stack([transparencyRow, contentTransparencyRow, backgroundTransparencyRow], spacing: 8)
+        transparency.setCustomSpacing(12, after: transparencyRow)
+        let general = stack([heading("常规"), transparency, clockActions])
+        general.setCustomSpacing(16, after: transparency)
 
         clockSlotPopup.addItems(withTitles: ClockSlot.allCases.map { settings.title(for: $0) })
         clockSlotPopup.target = self
@@ -455,7 +461,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSWindowDelega
         contentTransparencyRow.update(settings.contentTransparency)
         backgroundTransparencyRow.update(settings.backgroundTransparency)
         lockButton.state = settings.isLocked ? .on : .off
-        visibilityButton.state = clockIsVisible ? .on : .off
         for (index, slot) in ClockSlot.allCases.enumerated() {
             clockSlotPopup.item(at: index)?.title = settings.title(for: slot)
         }
@@ -490,7 +495,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSWindowDelega
     @objc private func dateChanged() { change { $0.showsDate = dateButton.state == .on } }
     @objc private func minuteNumeralsChanged() { change { $0.showsMinuteNumerals = minuteNumeralsButton.state == .on } }
     @objc private func lockChanged() { change { $0.isLocked = lockButton.state == .on } }
-    @objc private func visibilityChanged() { onToggleVisibility?() }
     @objc private func moveToCurrentScreen() { onMoveToCurrentScreen?() }
     @objc private func closeSettings() { close() }
 }

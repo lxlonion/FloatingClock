@@ -20,9 +20,9 @@ final class PercentageMenuView: NSView {
         titleLabel = NSTextField(labelWithString: title)
         valueLabel = NSTextField(labelWithString: "")
         let isSmall = controlSize == .small
-        let rowHeight: CGFloat = isSmall ? 50 : 58
+        let rowHeight: CGFloat = isSmall ? 42 : 58
         let fontSize: CGFloat = isSmall ? 11 : 12
-        let labelY = rowHeight - 24
+        let labelY: CGFloat = isSmall ? 23 : 34
         super.init(frame: CGRect(x: 0, y: 0, width: 286, height: rowHeight))
         titleLabel.font = .systemFont(ofSize: fontSize, weight: .medium)
         titleLabel.frame = CGRect(x: 20, y: labelY, width: 184, height: 18)
@@ -32,7 +32,7 @@ final class PercentageMenuView: NSView {
         valueLabel.frame = CGRect(x: 212, y: labelY, width: 54, height: 18)
         addSubview(valueLabel)
         slider.controlSize = controlSize
-        slider.frame = CGRect(x: 18, y: 5, width: 250, height: isSmall ? 20 : 25)
+        slider.frame = CGRect(x: 18, y: isSmall ? 3 : 5, width: 250, height: isSmall ? 20 : 25)
         slider.isContinuous = true
         slider.target = self
         slider.action = #selector(sliderChanged)
@@ -68,15 +68,11 @@ final class MenuController: NSObject, NSMenuDelegate {
         title: "背景透明度", controlSize: .small, help: "单独调整时钟底板和阴影。")
     private let layerTransparencyItems = [NSMenuItem(), NSMenuItem()]
     private var statusItem: NSStatusItem?
-    private let subtitle = NSTextField(labelWithString: "始终置顶 · 拖动表盘移动")
     private var lockItem: NSMenuItem!
-    private var visibilityItem: NSMenuItem!
     private(set) var clockSlotItems: [NSMenuItem] = []
     private var quickItems: [NSMenuItem] = []
     var settings: ClockSettings { didSet { refresh() } }
-    var clockIsVisible = true { didSet { refresh() } }
     var onSettingsChanged: ((ClockSettings) -> Void)?
-    var onToggleVisibility: (() -> Void)?
     var onMoveToCurrentScreen: (() -> Void)?
     var onShowAdvancedSettings: (() -> Void)?
     var onQuit: (() -> Void)?
@@ -115,19 +111,6 @@ final class MenuController: NSObject, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) { refresh() }
 
     private func buildMenu() {
-        let header = NSView(frame: CGRect(x: 0, y: 0, width: 286, height: 53))
-        let title = NSTextField(labelWithString: "漂浮时钟")
-        title.font = .systemFont(ofSize: 14, weight: .semibold)
-        title.frame = CGRect(x: 20, y: 28, width: 250, height: 19)
-        subtitle.font = .systemFont(ofSize: 11)
-        subtitle.textColor = .secondaryLabelColor
-        subtitle.frame = CGRect(x: 20, y: 10, width: 250, height: 16)
-        header.addSubview(title)
-        header.addSubview(subtitle)
-        let headerItem = NSMenuItem()
-        headerItem.view = header
-        menu.addItem(headerItem)
-        menu.addItem(.separator())
         transparencyDisclosureButton.target = self
         transparencyDisclosureButton.action = #selector(toggleTransparencyDetails)
         transparencyDisclosureButton.setFrameSize(NSSize(width: transparencyView.bounds.width,
@@ -151,8 +134,6 @@ final class MenuController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         lockItem = makeItem("锁定位置（鼠标穿透）", action: #selector(toggleLock))
         menu.addItem(lockItem)
-        visibilityItem = makeItem("显示时钟", action: #selector(toggleVisibility))
-        menu.addItem(visibilityItem)
         menu.addItem(.separator())
         let advanced = makeItem("高级设置…", action: #selector(showAdvancedSettings))
         advanced.keyEquivalent = ","
@@ -178,7 +159,6 @@ final class MenuController: NSObject, NSMenuDelegate {
         contentTransparencyView.update(settings.contentTransparency)
         backgroundTransparencyView.update(settings.backgroundTransparency)
         lockItem.state = settings.isLocked ? .on : .off
-        visibilityItem.state = clockIsVisible ? .on : .off
         let date = Date()
         for (item, slot) in zip(clockSlotItems, ClockSlot.allCases) {
             item.title = settings.menuTitle(for: slot, at: date)
@@ -189,7 +169,6 @@ final class MenuController: NSObject, NSMenuDelegate {
                 item.state = enabled ? .on : .off
             }
         }
-        subtitle.stringValue = settings.isLocked ? "始终置顶 · 已锁定，鼠标可穿透" : "始终置顶 · 拖动表盘移动"
     }
 
     private func change(_ edit: (inout ClockSettings) -> Void) {
@@ -211,7 +190,6 @@ final class MenuController: NSObject, NSMenuDelegate {
     @objc private func toggleSeconds() { change { $0.showsSeconds.toggle() } }
     @objc private func toggleMinuteNumerals() { change { $0.showsMinuteNumerals.toggle() } }
     @objc private func showAdvancedSettings() { onShowAdvancedSettings?() }
-    @objc private func toggleVisibility() { onToggleVisibility?() }
     @objc private func moveToCurrentScreen() { onMoveToCurrentScreen?() }
     @objc private func quitApp() { onQuit?() }
 }

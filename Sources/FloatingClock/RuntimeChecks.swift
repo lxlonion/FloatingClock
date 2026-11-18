@@ -44,20 +44,8 @@ enum RuntimeChecks {
             store.save(value)
         }
         controller.onShowAdvancedSettings = { advanced.showSettings() }
-        func syncVisibility() {
-            controller.clockIsVisible = panel.isVisible
-            advanced.clockIsVisible = panel.isVisible
-        }
-        let toggleVisibility = {
-            if panel.isVisible { panel.hideClock() } else { panel.showClock() }
-            syncVisibility()
-        }
-        controller.onToggleVisibility = toggleVisibility
-        advanced.onToggleVisibility = toggleVisibility
-        advanced.onMoveToCurrentScreen = {
-            panel.moveToCurrentScreen()
-            syncVisibility()
-        }
+        controller.onMoveToCurrentScreen = { panel.moveToCurrentScreen() }
+        advanced.onMoveToCurrentScreen = controller.onMoveToCurrentScreen
         var quitRequests = 0
         controller.onQuit = { quitRequests += 1 }
         check(panel.level.rawValue == NSWindow.Level.popUpMenu.rawValue - 1, "above app windows, below system menus")
@@ -83,8 +71,10 @@ enum RuntimeChecks {
         } else { check(false, "lock menu exists") }
 
         check(controller.menu.items.allSatisfy { $0.submenu == nil }, "compact menu has no secondary submenus")
-        check(controller.menu.items.filter { $0.action != nil }.count == 8,
-              "compact menu includes three clock slots and the five existing actions")
+        check(controller.menu.items.filter { $0.action != nil }.count == 7,
+              "compact menu includes three clock slots and four actions")
+        check(controller.menu.items.first?.view === controller.transparencyView,
+              "the status menu starts with the overall transparency slider")
         if let index = controller.menu.items.firstIndex(where: { $0.title == "高级设置…" }) {
             controller.menu.performActionForItem(at: index)
             check(advanced.window?.isVisible == true && advanced.window?.canBecomeKey == true,
@@ -125,10 +115,18 @@ enum RuntimeChecks {
         check(layerItems.count == 2 && layerItems.allSatisfy(\.isHidden) && !menuDisclosure.isExpanded &&
               layerRows.allSatisfy { !$0.isHidden && $0.superview != nil && $0.frame.height > 0 },
               "layer sliders start collapsed in the menu and laid out in advanced settings")
+        let transparencyRows = [advanced.transparencyRow] + layerRows
+        let rowGaps = zip(transparencyRows, layerRows).map { row, nextRow in
+            let lastContentEdge = row.subviews.map { $0.convert($0.bounds, to: scroll.documentView).maxY }.max() ?? .infinity
+            return nextRow.convert(nextRow.bounds, to: scroll.documentView).minY - lastContentEdge
+        }
+        check((11...13).contains(rowGaps[0]) && (7...9).contains(rowGaps[1]),
+              "advanced transparency rows keep 12pt and 8pt gaps (measured \(rowGaps))")
         let settingsHeight = scroll.documentView?.frame.height ?? 0
         _ = menuDisclosure.sendAction(menuDisclosure.action, to: menuDisclosure.target)
-        check(menuDisclosure.isExpanded && layerItems.allSatisfy { !$0.isHidden },
-              "expanding the menu disclosure reveals both layer sliders")
+        check(menuDisclosure.isExpanded && layerItems.allSatisfy { !$0.isHidden } &&
+              layerViews.allSatisfy { row in row.bounds.height < 50 && row.subviews.allSatisfy { row.bounds.contains($0.frame) } },
+              "expanding the menu disclosure reveals both layer sliders in compact rows")
 
         check(controller.clockSlotItems.count == 3 && advanced.clockSlotPopup.numberOfItems == 3 &&
               controller.clockSlotItems.map(\.state) == [.on, .off, .off],
@@ -262,22 +260,17 @@ enum RuntimeChecks {
               controller.menu.items.first(where: { $0.title == "锁定位置（鼠标穿透）" })?.state == .on,
               "advanced lock updates mouse pass-through, persistence, and menu checkmark")
         advanced.lockButton.performClick(nil)
-        panel.showClock()
-        syncVisibility()
-        advanced.visibilityButton.performClick(nil)
-        check(!panel.isVisible && !controller.clockIsVisible && advanced.visibilityButton.state == .off &&
-              advanced.window?.isVisible == true,
-              "hiding the clock in advanced settings keeps the settings window open and menu synchronized")
-        if let index = controller.menu.items.firstIndex(where: { $0.title == "显示时钟" }) {
-            controller.menu.performActionForItem(at: index)
-            check(panel.isVisible && advanced.visibilityButton.state == .on,
-                  "showing the clock from the menu synchronizes the advanced visibility control")
-            controller.menu.performActionForItem(at: index)
-        } else { check(false, "visibility menu exists") }
+        panel.hideClock()
         advanced.moveToScreenButton.performClick(nil)
-        check(panel.isVisible && controller.clockIsVisible && advanced.visibilityButton.state == .on &&
+        check(panel.isVisible && advanced.window?.isVisible == true &&
               NSScreen.screens.contains { $0.visibleFrame.contains(panel.frame) },
-              "advanced screen recovery shows the clock on screen and updates both visibility controls")
+              "advanced screen recovery brings the clock into view and keeps settings open")
+        if let index = controller.menu.items.firstIndex(where: { $0.title == "移回当前屏幕" }) {
+            panel.hideClock()
+            controller.menu.performActionForItem(at: index)
+            check(panel.isVisible && NSScreen.screens.contains { $0.visibleFrame.contains(panel.frame) },
+                  "menu screen recovery brings the clock into view")
+        } else { check(false, "screen recovery menu item exists") }
         if let index = controller.menu.items.firstIndex(where: { $0.title == "退出漂浮时钟" }) {
             controller.menu.performActionForItem(at: index)
             check(quitRequests == 1, "menu quit invokes its callback without terminating the test")
@@ -288,6 +281,11 @@ enum RuntimeChecks {
         }
         let settingsLabels = advanced.window?.contentView.map { labels($0) } ?? []
         check(!settingsLabels.contains("分层透明度"), "advanced settings has no layer disclosure button")
+        check(!settingsLabels.contains("0% · 不透明") && !settingsLabels.contains("90% · 最透明") &&
+              settingsLabels.contains("260 · 小号") && settingsLabels.contains("100% · 实色"),
+              "only the transparency sliders omit endpoint descriptions")
+        check(!settingsLabels.contains("显示时钟") && controller.menu.item(withTitle: "显示时钟") == nil,
+              "advanced settings and the status menu omit the clock visibility toggle")
         check(!settingsLabels.contains("高级设置") && !settingsLabels.contains("退出漂浮时钟"),
               "settings body has no duplicate heading or quit control")
 

@@ -29,7 +29,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.applySettings(updated)
         }
         menuController.onShowAdvancedSettings = { [weak self] in self?.showAdvancedSettings() }
-        menuController.onToggleVisibility = { [weak self] in self?.toggleClockVisibility() }
         menuController.onMoveToCurrentScreen = { [weak self] in self?.moveClockToCurrentScreen() }
         menuController.onQuit = { NSApp.terminate(nil) }
         panel.face.onContextMenu = { [weak self] event in
@@ -46,7 +45,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         panel.constrainAndSavePosition()
         panel.showClock()
-        refreshVisibility()
     }
 
     private func applySettings(_ updated: ClockSettings) {
@@ -59,28 +57,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if advancedSettingsController == nil {
             let controller = AdvancedSettingsWindowController(settings: settings)
             controller.onSettingsChanged = { [weak self] updated in self?.applySettings(updated) }
-            controller.onToggleVisibility = { [weak self] in self?.toggleClockVisibility() }
             controller.onMoveToCurrentScreen = { [weak self] in self?.moveClockToCurrentScreen() }
             advancedSettingsController = controller
         }
         advancedSettingsController?.settings = settings
-        advancedSettingsController?.clockIsVisible = panel.isVisible
         advancedSettingsController?.showSettings()
-    }
-
-    private func toggleClockVisibility() {
-        if panel.isVisible { panel.hideClock() } else { panel.showClock() }
-        refreshVisibility()
     }
 
     private func moveClockToCurrentScreen() {
         panel.moveToCurrentScreen()
-        refreshVisibility()
-    }
-
-    private func refreshVisibility() {
-        menuController.clockIsVisible = panel.isVisible
-        advancedSettingsController?.clockIsVisible = panel.isVisible
     }
 
     @objc private func displayConfigurationChanged() {
@@ -95,7 +80,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         panel?.showClock()
-        if panel != nil { refreshVisibility() }
         return false
     }
 
