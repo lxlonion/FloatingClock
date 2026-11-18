@@ -105,12 +105,30 @@ enum RuntimeChecks {
         check(controller.clockSlotItems.count == 3 && advanced.clockSlotPopup.numberOfItems == 3 &&
               controller.clockSlotItems.map(\.state) == [.on, .off, .off],
               "three clock slots default to the system slot in the menu and advanced settings")
-        check(advanced.secondTimeZoneRow.daylightSavingButton.state == .off && advanced.thirdTimeZoneRow.daylightSavingButton.state == .on,
-              "Pacific standard time disables DST by default while New York enables automatic DST")
         let catalog = ClockTimeZoneCatalog.shared
-        check(advanced.secondTimeZoneRow.timeZonePopup.numberOfItems == catalog.options.count && catalog.options.count < 90 &&
-              advanced.thirdTimeZoneRow.timeZonePopup.itemTitles.allSatisfy { $0.hasPrefix("UTC") },
-              "time zone pickers merge geographic duplicates into \(catalog.options.count) UTC-sorted choices")
+        let zonePopup = advanced.secondTimeZoneRow.timeZonePopup
+        let newYorkOption = catalog.option(for: "America/New_York")!
+        check(zonePopup.title == "UTC−08:00" && advanced.thirdTimeZoneRow.timeZonePopup.title == newYorkOption.title,
+              "settings show a fixed Pacific offset and a New York choice that follows local time")
+        let firstLevel = zonePopup.menu?.items.filter { !$0.isHidden && !$0.isSeparatorItem && $0.submenu == nil }
+        check(firstLevel?.map(\.title) == catalog.commonOptions.map(\.title) &&
+              zonePopup.menu?.item(withTitle: "固定 UTC 偏移")?.submenu?.items.map(\.title) == catalog.fixedOptions.map(\.title),
+              "time zone menu opens with common choices and keeps fixed UTC offsets in their own submenu")
+        let shanghaiOption = catalog.option(for: "Asia/Shanghai")!
+        check(["亚洲", "大洋洲"].allSatisfy { region in
+            zonePopup.menu?.item(withTitle: region)?.submenu?.item(withTitle: shanghaiOption.title) != nil
+        }, "the Shanghai and Perth choice appears in both the Asian and Oceanian submenus")
+
+        func chooseTimeZone(_ option: ClockTimeZoneOption, in popup: NSPopUpButton, submenu: String? = nil) {
+            let menu = submenu.flatMap { popup.menu?.item(withTitle: $0)?.submenu } ?? popup.menu
+            guard let menu, let index = menu.items.firstIndex(where: {
+                ($0.representedObject as? ClockTimeZoneOption)?.identifier == option.identifier
+            }) else {
+                check(false, "time zone option \(option.title) is available")
+                return
+            }
+            menu.performActionForItem(at: index)
+        }
         for (index, slot) in ClockSlot.allCases.enumerated() {
             if let menuIndex = controller.menu.items.firstIndex(of: controller.clockSlotItems[index]) {
                 controller.menu.performActionForItem(at: menuIndex)
@@ -123,52 +141,45 @@ enum RuntimeChecks {
         _ = advanced.clockSlotPopup.sendAction(advanced.clockSlotPopup.action, to: advanced.clockSlotPopup.target)
         check(panel.face.settings.selectedClockSlot == .second && controller.clockSlotItems[1].state == .on && store.load().selectedClockSlot == .second,
               "advanced slot selection synchronizes the face, menu checkmark and persistence")
-        advanced.secondTimeZoneRow.daylightSavingButton.performClick(nil)
+        let pacificOption = catalog.option(for: ClockTimeZoneSettings.pacific.identifier)!
+        chooseTimeZone(pacificOption, in: zonePopup)
         check(panel.face.settings.secondClockTimeZone.usesDaylightSavingTime && store.load().secondClockTimeZone.usesDaylightSavingTime &&
-              controller.clockSlotItems[1].title.contains("UTC−08:00") && controller.clockSlotItems[1].title.contains("有夏令时") &&
-              advanced.thirdTimeZoneRow.daylightSavingButton.state == .on,
-              "enabling Pacific DST updates the clock and menu title without changing the third slot")
-        advanced.thirdTimeZoneRow.daylightSavingButton.performClick(nil)
+              controller.clockSlotItems[1].title.contains(pacificOption.title) && store.load().thirdClockTimeZone == .newYork,
+              "selecting Los Angeles from common choices updates the clock and leaves the third slot unchanged")
+        let fixedEastern = catalog.fixedOptions.first { $0.standardOffset == -5 * 3600 }!
+        chooseTimeZone(fixedEastern, in: advanced.thirdTimeZoneRow.timeZonePopup, submenu: "固定 UTC 偏移")
         check(!store.load().thirdClockTimeZone.usesDaylightSavingTime && panel.face.settings.secondClockTimeZone.usesDaylightSavingTime &&
-              controller.clockSlotItems[2].title.contains("UTC−05:00 · 标准时间"),
-              "New York DST can be disabled independently and updates its menu title")
-        let zonePopup = advanced.secondTimeZoneRow.timeZonePopup
+              controller.clockSlotItems[2].title == ClockSlot.third.title + " · UTC−05:00" &&
+              advanced.thirdTimeZoneRow.statusLabel.stringValue == "当前 UTC−05:00",
+              "selecting a fixed offset replaces New York's local rule and displays the fixed UTC offset")
         let kathmanduOption = catalog.option(for: "Asia/Kathmandu")!
-        zonePopup.select(zonePopup.itemArray.first { $0.representedObject as? String == kathmanduOption.identifier })
-        _ = zonePopup.sendAction(zonePopup.action, to: zonePopup.target)
-        check(store.load().secondClockTimeZone.identifier == kathmanduOption.identifier && panel.face.settings.secondClockTimeZone.identifier == kathmanduOption.identifier &&
-              controller.clockSlotItems[1].title.contains("UTC+05:45") && advanced.clockSlotPopup.titleOfSelectedItem?.contains("UTC+05:45") == true,
-              "fractional UTC offset selection updates the face, persistence and both slot labels")
-        check(!advanced.secondTimeZoneRow.daylightSavingButton.isEnabled && advanced.secondTimeZoneRow.daylightSavingButton.state == .off &&
-              !store.load().secondClockTimeZone.usesDaylightSavingTime,
-              "fixed-offset choices turn off and disable the inapplicable daylight saving checkbox")
+        chooseTimeZone(kathmanduOption, in: zonePopup, submenu: "亚洲")
+        check(store.load().secondClockTimeZone == kathmanduOption.settings && panel.face.settings.secondClockTimeZone == kathmanduOption.settings &&
+              controller.clockSlotItems[1].title.contains(kathmanduOption.title) &&
+              advanced.clockSlotPopup.titleOfSelectedItem?.contains(kathmanduOption.title) == true,
+              "a fractional regional choice updates the face, persistence and both slot labels")
         advanced.close()
         advanced.showSettings()
-        check(advanced.secondTimeZoneRow.timeZonePopup.selectedItem?.representedObject as? String == kathmanduOption.identifier &&
-              advanced.secondTimeZoneRow.daylightSavingButton.state == .off && advanced.thirdTimeZoneRow.daylightSavingButton.state == .off,
-              "reopening advanced settings preserves independent zone and DST selections")
+        check(zonePopup.title == kathmanduOption.title && advanced.secondTimeZoneRow.statusLabel.stringValue == "当前 UTC+05:45" &&
+              advanced.thirdTimeZoneRow.timeZonePopup.title == fixedEastern.title,
+              "reopening advanced settings restores independent regional and fixed selections")
         advanced.window?.contentView?.layoutSubtreeIfNeeded()
         check([advanced.secondTimeZoneRow, advanced.thirdTimeZoneRow].allSatisfy { row in
             let popup = row.convert(row.timeZonePopup.bounds, from: row.timeZonePopup)
             return row.bounds.width <= scroll.contentView.bounds.width && popup.minX >= 0 && popup.maxX <= row.bounds.maxX
         }, "long time zone names fit the settings viewport without widening or clipping the controls on the right")
-        let pacificOption = catalog.option(for: ClockTimeZoneSettings.pacific.identifier)!
-        zonePopup.select(zonePopup.itemArray.first { $0.representedObject as? String == pacificOption.identifier })
-        _ = zonePopup.sendAction(zonePopup.action, to: zonePopup.target)
-        check(advanced.secondTimeZoneRow.daylightSavingButton.isEnabled && advanced.secondTimeZoneRow.daylightSavingButton.state == .on &&
-              store.load().secondClockTimeZone.usesDaylightSavingTime,
-              "selecting a seasonal choice enables its rules and re-enables the DST checkbox")
         var legacyAlias = controller.settings
         legacyAlias.secondClockTimeZone = ClockTimeZoneSettings(identifier: "US/Pacific", usesDaylightSavingTime: false)
         controller.settings = legacyAlias
         controller.onSettingsChanged?(legacyAlias)
         advanced.showSettings()
-        check(store.load().secondClockTimeZone.identifier == "US/Pacific" &&
-              zonePopup.selectedItem?.representedObject as? String == pacificOption.identifier && advanced.secondTimeZoneRow.daylightSavingButton.state == .off,
-              "opening grouped choices preserves a saved geographic alias and its disabled DST preference")
-        advanced.secondTimeZoneRow.daylightSavingButton.performClick(nil)
-        check(store.load().secondClockTimeZone.identifier == "US/Pacific" && store.load().secondClockTimeZone.usesDaylightSavingTime,
-              "toggling DST on a grouped legacy choice preserves the original saved time zone identifier")
+        check(store.load().secondClockTimeZone == legacyAlias.secondClockTimeZone && zonePopup.title == "UTC−08:00",
+              "opening advanced settings displays a legacy standard-only selection as fixed without rewriting it")
+        legacyAlias.secondClockTimeZone.usesDaylightSavingTime = true
+        controller.settings = legacyAlias
+        controller.onSettingsChanged?(legacyAlias)
+        check(store.load().secondClockTimeZone == legacyAlias.secondClockTimeZone && zonePopup.title == pacificOption.title,
+              "a saved regional alias with DST enabled shows the matching regional choice")
         var resetSlots = controller.settings
         resetSlots.selectedClockSlot = .system
         resetSlots.secondClockTimeZone = .pacific

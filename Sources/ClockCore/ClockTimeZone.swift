@@ -40,11 +40,7 @@ public struct ClockTimeZoneSettings: Codable, Equatable {
     }
 
     public var displayName: String {
-        if usesDaylightSavingTime, let option = ClockTimeZoneCatalog.shared.option(for: identifier), option.hasDaylightSavingTime {
-            return option.title
-        }
-        let zone = timeZone(at: Date())
-        return "\(ClockTimeZoneCatalog.offsetTitle(zone.secondsFromGMT())) · 标准时间"
+        ClockTimeZoneCatalog.shared.option(for: self, at: Date())?.title ?? identifier
     }
 
     public static func selectionTitle(for identifier: String) -> String {

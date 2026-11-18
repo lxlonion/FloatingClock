@@ -4,9 +4,9 @@ private struct TimeZoneState: Hashable {
     let offset: Int
     let daylightOffset: Int
 
-    init(_ zone: TimeZone, at date: Date) {
+    init(_ zone: TimeZone, at date: Date, ignoringDaylightSavingTime: Bool = false) {
         offset = zone.secondsFromGMT(for: date)
-        daylightOffset = Int(zone.daylightSavingTimeOffset(for: date))
+        daylightOffset = ignoringDaylightSavingTime ? 0 : Int(zone.daylightSavingTimeOffset(for: date))
     }
 }
 
@@ -25,14 +25,56 @@ private struct TimeZoneRule: Hashable {
     }
 
     init(_ zone: TimeZone, from start: Date, to end: Date) {
-        initial = TimeZoneState(zone, at: start)
+        let startingState = TimeZoneState(zone, at: start)
         var changes: [TimeZoneTransition] = []
         var cursor = start
         while let date = zone.nextDaylightSavingTimeTransition(after: cursor), date < end {
-            changes.append(TimeZoneTransition(date: date, state: TimeZoneState(zone, at: date)))
+            let state = TimeZoneState(zone, at: date)
+            if state != (changes.last?.state ?? startingState) {
+                changes.append(TimeZoneTransition(date: date, state: state))
+            }
             cursor = date.addingTimeInterval(1)
         }
+        // A region that has permanently adopted its former summer offset can
+        // share the same choice as any region now keeping that offset.
+        initial = changes.isEmpty ? TimeZoneState(zone, at: start, ignoringDaylightSavingTime: true) : startingState
         transitions = changes
+    }
+}
+
+public enum ClockTimeZoneRegion: String, CaseIterable {
+    case americas = "美洲"
+    case europe = "欧洲"
+    case africa = "非洲"
+    case asia = "亚洲"
+    case oceania = "大洋洲"
+    case polar = "极地"
+
+    fileprivate init?(identifier: String) {
+        switch identifier {
+        case "Atlantic/Bermuda", "Atlantic/South_Georgia", "Atlantic/Stanley",
+             "Pacific/Easter", "Pacific/Galapagos":
+            self = .americas
+            return
+        case "Atlantic/Cape_Verde", "Atlantic/St_Helena",
+             "Indian/Antananarivo", "Indian/Comoro", "Indian/Mahe", "Indian/Mauritius", "Indian/Mayotte", "Indian/Reunion":
+            self = .africa
+            return
+        case "Indian/Christmas", "Indian/Cocos":
+            self = .oceania
+            return
+        default:
+            break
+        }
+        switch identifier.split(separator: "/").first {
+        case "America": self = .americas
+        case "Atlantic", "Europe": self = .europe
+        case "Africa": self = .africa
+        case "Asia", "Indian": self = .asia
+        case "Australia", "Pacific": self = .oceania
+        case "Antarctica", "Arctic": self = .polar
+        default: return nil
+        }
     }
 }
 
@@ -40,79 +82,101 @@ public struct ClockTimeZoneOption: Equatable {
     public let identifier: String
     public let standardOffset: Int
     public let hasDaylightSavingTime: Bool
-    public fileprivate(set) var title: String
+    public let regions: [ClockTimeZoneRegion]
     public let help: String
+    fileprivate let placeNames: [String]
+
+    public var title: String {
+        let offset = ClockTimeZoneCatalog.offsetTitle(standardOffset)
+        let places = placeNames.isEmpty ? "" : " · " + placeNames.joined(separator: "／")
+        return offset + places + (hasDaylightSavingTime ? " - 夏令时" : "")
+    }
+
+    public var settings: ClockTimeZoneSettings {
+        ClockTimeZoneSettings(identifier: identifier, usesDaylightSavingTime: !regions.isEmpty)
+    }
 }
 
-/// Merge geographic aliases only when their offsets AND transition rules agree.
-/// Include this year and the next two years so future rule changes stay distinct.
+/// Group places whose clocks follow the same rules over the next three years.
 public struct ClockTimeZoneCatalog {
     public static let shared = Self()
     public let options: [ClockTimeZoneOption]
-    private let start: Date
-    private let end: Date
-    private let year: Int
+    public let commonOptions: [ClockTimeZoneOption]
+    public let fixedOptions: [ClockTimeZoneOption]
     private let referenceDate: Date
+    private let end: Date
     private let optionsByRule: [TimeZoneRule: ClockTimeZoneOption]
 
     public init(referenceDate: Date = Date()) {
         self.referenceDate = referenceDate
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        let year = calendar.component(.year, from: referenceDate)
-        self.year = year
-        let start = calendar.date(from: DateComponents(year: year, month: 1, day: 1))!
-        let end = calendar.date(byAdding: .year, value: 3, to: start)!
-        self.start = start
+        let end = calendar.date(byAdding: .year, value: 3, to: referenceDate)!
         self.end = end
+        let representatives = ClockTimeZonePlace.representatives
+        let identifiers = Set(TimeZone.knownTimeZoneIdentifiers).union(representatives.map(\.identifier))
         var groups: [TimeZoneRule: [String]] = [:]
-        for identifier in TimeZone.knownTimeZoneIdentifiers {
-            guard let zone = TimeZone(identifier: identifier) else { continue }
-            groups[TimeZoneRule(zone, from: start, to: end), default: []].append(identifier)
+        var rulesByIdentifier: [String: TimeZoneRule] = [:]
+        for identifier in identifiers.sorted() {
+            guard let zone = TimeZone(identifier: identifier),
+                  ClockTimeZoneRegion(identifier: identifier) != nil else { continue }
+            let rule = TimeZoneRule(zone, from: referenceDate, to: end)
+            groups[rule, default: []].append(identifier)
+            rulesByIdentifier[identifier] = rule
         }
-        // Provide one fixed-offset choice for every standard offset, including
-        // offsets otherwise represented only by a region with seasonal changes.
-        let offsets = Set(groups.keys.map(\.standardOffset)).union((-12...14).map { $0 * 3600 })
-        for offset in offsets {
-            guard let zone = TimeZone(secondsFromGMT: offset) else { continue }
-            groups[TimeZoneRule(zone, from: start, to: end), default: []].insert(zone.identifier, at: 0)
+
+        let placesByRule = Dictionary(grouping: representatives) { rulesByIdentifier[$0.identifier] }
+        let ordering = Dictionary(uniqueKeysWithValues: representatives.enumerated().map { ($1.identifier, $0) })
+        let entries = groups.map { rule, identifiers in
+            let places = placesByRule[rule] ?? []
+            let identifier = places.first?.identifier ?? identifiers[0]
+            let regions = identifiers.compactMap(ClockTimeZoneRegion.init(identifier:))
+            return (rule, Self.regionalOption(identifier: identifier, rule: rule,
+                                              names: places.prefix(2).map(\.name), regions: regions))
         }
-        let preferred = ["America/Los_Angeles", "America/New_York", "Europe/London", "Europe/Berlin", "Australia/Sydney", "Pacific/Auckland"]
-        var entries: [(TimeZoneRule, ClockTimeZoneOption)] = groups.map { rule, identifiers in
-            let identifier: String
-            if rule.transitions.isEmpty && !rule.hasDaylightSavingTime {
-                identifier = TimeZone(secondsFromGMT: rule.standardOffset)!.identifier
-            } else {
-                identifier = preferred.first { identifiers.contains($0) } ?? identifiers.sorted().first!
-            }
-            return (rule, Self.makeOption(identifier: identifier, rule: rule, year: year, referenceDate: referenceDate))
+        let byRule = Dictionary(uniqueKeysWithValues: entries)
+        optionsByRule = byRule
+        options = entries.map { $0.1 }.sorted {
+            if $0.standardOffset != $1.standardOffset { return $0.standardOffset < $1.standardOffset }
+            if $0.hasDaylightSavingTime != $1.hasDaylightSavingTime { return !$0.hasDaylightSavingTime }
+            return (ordering[$0.identifier] ?? .max, $0.identifier) < (ordering[$1.identifier] ?? .max, $1.identifier)
         }
-        entries.sort {
-            if $0.1.standardOffset != $1.1.standardOffset { return $0.1.standardOffset < $1.1.standardOffset }
-            if $0.1.hasDaylightSavingTime != $1.1.hasDaylightSavingTime { return !$0.1.hasDaylightSavingTime }
-            if $0.1.title != $1.1.title { return $0.1.title < $1.1.title }
-            return $0.1.identifier < $1.1.identifier
+        let common = ["Asia/Shanghai", "America/New_York", "America/Los_Angeles", "Europe/London", "Asia/Tokyo", "Australia/Sydney"]
+        var commonIdentifiers = Set<String>()
+        commonOptions = common.compactMap { identifier in
+            guard let rule = rulesByIdentifier[identifier], let option = byRule[rule],
+                  commonIdentifiers.insert(option.identifier).inserted else { return nil }
+            return option
         }
-        // Some rules share the same dates but switch at different hours. Keep
-        // them separate and expose exact UTC transition times in the tooltip.
-        let titleCounts = Dictionary(grouping: entries, by: { $0.1.title }).mapValues(\.count)
-        var titleNumbers: [String: Int] = [:]
-        for index in entries.indices {
-            let title = entries[index].1.title
-            if titleCounts[title, default: 0] > 1 {
-                titleNumbers[title, default: 0] += 1
-                entries[index].1.title += " · 规则 \(titleNumbers[title]!)"
-            }
+
+        let observedOffsets = groups.keys.flatMap { rule in
+            [rule.standardOffset, rule.initial.offset] + rule.transitions.map { $0.state.offset }
         }
-        options = entries.map { $0.1 }
-        optionsByRule = Dictionary(uniqueKeysWithValues: entries)
+        fixedOptions = Set(observedOffsets).union((-12...14).map { $0 * 3600 }).sorted().compactMap(Self.fixedOption)
     }
 
     public func option(for identifier: String) -> ClockTimeZoneOption? {
         guard let zone = TimeZone(identifier: identifier) else { return nil }
-        let rule = TimeZoneRule(zone, from: start, to: end)
-        return optionsByRule[rule] ?? Self.makeOption(identifier: identifier, rule: rule,
-            year: year, referenceDate: referenceDate)
+        // Foundation's fixed offsets and the Etc aliases have their own picker.
+        if identifier.hasPrefix("Etc/") || identifier == "GMT" || identifier == "UTC" ||
+            identifier.hasPrefix("GMT+") || identifier.hasPrefix("GMT-") ||
+            identifier.hasPrefix("UTC+") || identifier.hasPrefix("UTC-") {
+            return Self.fixedOption(zone.secondsFromGMT(for: referenceDate))
+        }
+        let rule = TimeZoneRule(zone, from: referenceDate, to: end)
+        if let option = optionsByRule[rule] { return option }
+        let region = ClockTimeZoneRegion(identifier: identifier) ?? .americas
+        return Self.regionalOption(identifier: identifier, rule: rule, names: [], regions: [region])
+    }
+
+    public func option(for settings: ClockTimeZoneSettings, at date: Date) -> ClockTimeZoneOption? {
+        guard let option = option(for: settings.identifier) else { return nil }
+        guard !settings.usesDaylightSavingTime else { return option }
+        let effectiveOffset = settings.timeZone(at: date).secondsFromGMT(for: date)
+        if option.hasDaylightSavingTime || TimeZone(identifier: settings.identifier)?.secondsFromGMT(for: date) != effectiveOffset {
+            return Self.fixedOption(effectiveOffset)
+        }
+        return option
     }
 
     public static func offsetTitle(_ seconds: Int) -> String {
@@ -120,43 +184,25 @@ public struct ClockTimeZoneCatalog {
         return String(format: "UTC%@%02d:%02d", seconds < 0 ? "−" : "+", magnitude / 3600, magnitude % 3600 / 60)
     }
 
-    private static func makeOption(identifier: String, rule: TimeZoneRule, year: Int, referenceDate: Date) -> ClockTimeZoneOption {
-        let prefix = offsetTitle(rule.standardOffset)
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        var starts: String?
-        var stops: String?
-        var previous = rule.initial
-        for transition in rule.transitions {
-            // Express the date on the local clock just before the change.
-            let local = transition.date.addingTimeInterval(TimeInterval(previous.offset))
-            if calendar.component(.year, from: local) == year {
-                let date = String(format: "%02d/%02d", calendar.component(.month, from: local), calendar.component(.day, from: local))
-                if transition.state.daylightOffset != 0 { starts = starts ?? date }
-                else { stops = stops ?? date }
-            }
-            previous = transition.state
+    private static func fixedOption(_ offset: Int) -> ClockTimeZoneOption? {
+        guard let zone = TimeZone(secondsFromGMT: offset) else { return nil }
+        return ClockTimeZoneOption(identifier: zone.identifier, standardOffset: offset, hasDaylightSavingTime: false,
+                                   regions: [], help: "全年使用 \(offsetTitle(offset))。", placeNames: [])
+    }
+
+    private static func regionalOption(identifier: String, rule: TimeZoneRule, names: [String],
+                                       regions: [ClockTimeZoneRegion]) -> ClockTimeZoneOption {
+        let city = identifier.split(separator: "/").last?.replacingOccurrences(of: "_", with: " ") ?? identifier
+        let offset = offsetTitle(rule.standardOffset)
+        let formatter = Date.ISO8601FormatStyle(timeZone: .gmt)
+        let upcoming = rule.transitions.prefix(4).map {
+            "\($0.date.formatted(formatter)) → \(offsetTitle($0.state.offset))"
         }
-        let kind: String
-        if rule.hasDaylightSavingTime {
-            let season: String
-            if let starts, let stops { season = "\(starts)—\(stops)" }
-            else if let starts { season = "\(starts) 起" }
-            else if let stops { season = "至 \(stops)" }
-            else { season = rule.initial.daylightOffset != 0 ? "全年" : "后续切换" }
-            kind = "有夏令时（\(season)）"
-        } else {
-            kind = rule.transitions.isEmpty ? "无夏令时" : "时差调整规则"
-        }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = "yyyy-MM-dd HH:mm 'UTC'"
-        let upcoming = rule.transitions.filter { $0.date >= referenceDate }.prefix(4).map {
-            "\(formatter.string(from: $0.date)) → \(offsetTitle($0.state.offset))"
-        }
-        let help = (["标准时间偏移：\(prefix)。相同偏移和切换规则的时区已合并。"] + upcoming).joined(separator: "\n")
+        let heading = rule.transitions.isEmpty ? "全年使用 \(offset)。" : "标准偏移 \(offset)，按当地规则切换。"
         return ClockTimeZoneOption(identifier: identifier, standardOffset: rule.standardOffset,
-                                  hasDaylightSavingTime: rule.hasDaylightSavingTime, title: "\(prefix) · \(kind)", help: help)
+                                   hasDaylightSavingTime: rule.hasDaylightSavingTime,
+                                   regions: ClockTimeZoneRegion.allCases.filter(regions.contains),
+                                   help: ([heading] + upcoming).joined(separator: "\n"),
+                                   placeNames: names.isEmpty ? [city] : names)
     }
 }
