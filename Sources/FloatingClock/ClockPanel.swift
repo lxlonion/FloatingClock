@@ -89,12 +89,15 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         let side = settings.faceSize + ClockLayout.padding * 2
         let origin = CGPoint(x: previousDial.midX - side / 2, y: previousDial.midY - side / 2)
         let clamped = ClockLayout.clampedOrigin(origin, size: side, screens: NSScreen.screens.map(\.visibleFrame))
-        // Apply content opacity once at the window, including native field
-        // editors. The background supplies its own relative opacity when drawn.
-        alphaValue = settings.contentAlpha
+        face.settings = settings
+        // Apply the greater opacity at the window so either group can fade
+        // independently while preserving a uniform fade where their values match.
+        alphaValue = face.compositingAlpha
+        timerTray.alphaValue = face.relativeContentAlpha
+        timerHint.alphaValue = face.relativeContentAlpha
+        addTimerButton.alphaValue = face.relativeContentAlpha
         ignoresMouseEvents = settings.isLocked
         if settings.isLocked { makeFirstResponder(nil); resignKey() }
-        face.settings = settings
         timerTray.appearance = settings.appearance == .system ? nil : NSAppearance(named: settings.appearance == .dark ? .darkAqua : .aqua)
         timerHint.appearance = timerTray.appearance
         timerTray.refresh(settings: settings)

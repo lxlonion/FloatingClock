@@ -28,6 +28,10 @@ enum LiveDisplayChecks {
         var checks: [[String: Any]] = []
         var buildsAfterOffscreen = 0
         var buildsAfterLive = 0
+        let suite = "FloatingClock.live-display.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        var timerField: NSTextField?
+        weak var timerEditor: NSText?
         func check(_ condition: Bool, _ name: String, _ detail: String = "") {
             checks.append(["name": name, "passed": condition, "detail": detail])
         }
@@ -223,7 +227,7 @@ enum LiveDisplayChecks {
                 check(changed > 300, "fractional time zone switching refreshes live minute numerals before any cache", "changed pixels=\(changed)")
                 settings.selectedClockSlot = .system
                 settings.showsMinuteNumerals = false
-                settings.transparency = 90
+                settings.transparency = 45
                 panel.face.fixedDate = six
                 panel.apply(settings)
             }),
@@ -234,7 +238,7 @@ enum LiveDisplayChecks {
                 panel.face.cacheDisplay(in: rect, to: bitmap)
                 let point = CGPoint(x: card.midX - 60, y: card.midY)
                 let alpha = color(bitmap, point.x, point.y)?.alphaComponent ?? -1
-                check(abs(alpha - 0.5) <= 1.5 / 255, "transparent snapshot groups the live shadow and fill once", "relative alpha=\(alpha)")
+                check(abs(alpha - 0.55 / 0.65) <= 1.5 / 255, "transparent snapshot groups the live shadow and fill once", "relative alpha=\(alpha)")
             }),
             (0.5, {
                 capture("12-after-cache")
@@ -287,10 +291,83 @@ enum LiveDisplayChecks {
                 panel.face.invalidateDial()
                 panel.displayIfNeeded()
                 check(panel.face.staticDialRenderCount == buildsAfterLive, "unchanged real-window redraws reuse the density-correct cache")
+                settings.showsMinuteNumerals = false
+                settings.appearance = .light
+                panel.apply(settings)
+            }),
+            (0.5, {
+                capture("16-opaque-reference")
+                settings.contentTransparency = 75
+                panel.apply(settings)
+            }),
+            (0.5, {
+                capture("17-manual-content")
+                let before = images["16-opaque-reference"]
+                let after = images["17-manual-content"]
+                let point = CGPoint(x: card.midX - 60, y: card.midY)
+                let background = brightness(after, point)
+                let originalHand = brightness(before, handPoint)
+                let fadedHand = brightness(after, handPoint)
+                check(background > 0.8 && abs(background - brightness(before, point)) < 0.01 &&
+                      originalHand >= 0 && originalHand < 0.4 && fadedHand > originalHand + 0.3 && fadedHand < background,
+                      "manual content transparency fades the live hand without dimming the card",
+                      "original hand=\(originalHand), faded hand=\(fadedHand), background=\(background)")
+                settings.backgroundTransparency = 90
+                panel.apply(settings)
+            }),
+            (0.5, {
+                capture("18-manual-background")
+                let image = images["18-manual-background"]
+                let background = color(image, card.midX - 60, card.midY)?.alphaComponent ?? -1
+                let hand = color(image, handPoint.x, handPoint.y)?.alphaComponent ?? -1
+                check(abs(background - 0.1) < 0.02 && abs(hand - 0.25) < 0.02,
+                      "manual background transparency fades the live card and preserves hand opacity",
+                      "hand alpha=\(hand), background alpha=\(background)")
+                settings.transparency = 0
+                panel.apply(settings)
+                let timers = TimerCoordinator(store: ClockTimerStore(defaults: defaults), notifications: CheckTimerNotifications())
+                timers.add()
+                panel.timerCoordinator = timers
+                timerField = panel.timerTray.rows.first?.durationInput.minutes.field
+                panel.makeKey()
+                panel.makeFirstResponder(timerField)
+                timerEditor = timerField?.currentEditor()
+            }),
+            (0.5, {
+                capture("19-timer-opaque")
+                settings.contentTransparency = 75
+                panel.apply(settings)
+            }),
+            (0.5, {
+                capture("20-timer-faded")
+                guard let field = timerField else { check(false, "live timer field exists"); return }
+                let rect = panel.face.convert(field.bounds, from: field).insetBy(dx: 1, dy: 1)
+                let dial = panel.face.dialCard
+                let background = brightness(images["19-timer-opaque"], CGPoint(x: dial.midX - 60, y: dial.midY))
+                // The card extends behind the tray, so test the editor's contrast over the card.
+                func contrast(_ image: NSBitmapImageRep?) -> CGFloat {
+                    guard image != nil else { return 0 }
+                    var darkest = background
+                    for y in stride(from: rect.minY, to: rect.maxY, by: 1) {
+                        for x in stride(from: rect.minX, to: rect.maxX, by: 1) {
+                            let sample = brightness(image, CGPoint(x: x, y: y))
+                            if sample >= 0 { darkest = min(darkest, sample) }
+                        }
+                    }
+                    return background - darkest
+                }
+                let opaque = contrast(images["19-timer-opaque"])
+                let faded = contrast(images["20-timer-faded"])
+                check(opaque > 0.6 && abs(faded - opaque * 0.25) < 0.03,
+                      "manual content transparency fades live timer input pixels as a group",
+                      "original contrast=\(opaque), faded contrast=\(faded)")
+                check(timerEditor != nil && field.currentEditor() === timerEditor,
+                      "adjusting manual content transparency leaves the active timer editor in place")
             })
         ]
         func finish() -> Never {
             panel.hideClock()
+            defaults.removePersistentDomain(forName: suite)
             let passed = checks.allSatisfy { $0["passed"] as? Bool == true }
             let result: [String: Any] = ["passed": passed, "checks": checks, "liveChecksBeforeFirstCache": true,
                                          "backingScale": panel.backingScaleFactor]

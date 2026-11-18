@@ -1,7 +1,7 @@
 import AppKit
 import ClockCore
 
-private final class CheckTimerNotifications: TimerNotificationScheduling {
+final class CheckTimerNotifications: TimerNotificationScheduling {
     var scheduled: [ClockTimer] = []
     var cancelled: [UUID] = []
     var message: String?
@@ -69,8 +69,9 @@ enum RuntimeChecks {
         _ = slider.sendAction(slider.action, to: slider.target)
         check(panel.alphaValue == panel.face.settings.contentAlpha && abs(panel.face.settings.backgroundAlpha - 0.46) < 0.001 &&
               panel.timerTray.alphaValue == 1, "live slider updates background and content opacity separately")
-        check(advanced.transparencyRow.slider.doubleValue == 54,
-              "menu transparency changes synchronize to the open settings window")
+        check(advanced.transparencyRow.slider.doubleValue == 54 && advanced.backgroundTransparencyRow.slider.doubleValue == 54 &&
+              abs(advanced.contentTransparencyRow.slider.doubleValue - 44.4) < 0.001,
+              "menu overall transparency synchronizes all three sliders to the open settings window")
 
         if let index = controller.menu.items.firstIndex(where: { $0.title == "锁定位置（鼠标穿透）" }) {
             controller.menu.performActionForItem(at: index)
@@ -193,6 +194,25 @@ enum RuntimeChecks {
         check(panel.alphaValue == panel.face.settings.contentAlpha && abs(panel.face.settings.backgroundAlpha - 0.69) < 0.001 && store.load().transparency == 31 &&
               controller.transparencyView.slider.doubleValue == 31,
               "advanced transparency updates the clock, saved value, and menu slider together")
+        let contentSlider = advanced.contentTransparencyRow.slider
+        contentSlider.doubleValue = 70
+        _ = contentSlider.sendAction(contentSlider.action, to: contentSlider.target)
+        check(store.load().usesCustomTransparency && store.load().contentTransparency == 70 &&
+              store.load().backgroundTransparency == 31 && controller.contentTransparencyView.slider.doubleValue == 70 &&
+              controller.transparencyView.title == "整体透明度 · 手动分层" && advanced.transparencyRow.title == controller.transparencyView.title,
+              "adjusting content alone enters manual mode and synchronizes the menu and saved settings")
+        let backgroundSlider = controller.backgroundTransparencyView.slider
+        backgroundSlider.doubleValue = 50
+        _ = backgroundSlider.sendAction(backgroundSlider.action, to: backgroundSlider.target)
+        check(store.load().backgroundTransparency == 50 && store.load().contentTransparency == 70 &&
+              advanced.backgroundTransparencyRow.slider.doubleValue == 50 && advanced.transparencyRow.slider.doubleValue == 31 &&
+              abs(panel.alphaValue * panel.timerTray.alphaValue - 0.30) < 0.001 && abs(panel.alphaValue - 0.50) < 0.001,
+              "adjusting background leaves content unchanged even when the background is more opaque")
+        _ = advancedTransparency.sendAction(advancedTransparency.action, to: advancedTransparency.target)
+        check(!store.load().usesCustomTransparency && controller.backgroundTransparencyView.slider.doubleValue == 31 &&
+              controller.contentTransparencyView.slider.doubleValue == store.load().contentTransparency &&
+              controller.transparencyView.title == "整体透明度",
+              "adjusting the overall slider relinks both layers even at the last overall value")
         advanced.lockButton.performClick(nil)
         check(panel.ignoresMouseEvents && store.load().isLocked &&
               controller.menu.items.first(where: { $0.title == "锁定位置（鼠标穿透）" })?.state == .on,
@@ -747,7 +767,7 @@ enum RuntimeChecks {
 
     private static func checkSnapshotGroupOpacity(_ check: (Bool, String) -> Void) {
         var settings = ClockSettings()
-        settings.transparency = 90
+        settings.transparency = 45
         let panel = ClockPanel(settings: settings)
         panel.face.fixedDate = ISO8601DateFormatter().date(from: "2026-11-14T10:15:36+08:00")
         defer { panel.hideClock() }
@@ -770,7 +790,7 @@ enum RuntimeChecks {
                         let x = Int((sample.x - rect.minX) * CGFloat(scale))
                         let y = Int((rect.maxY - sample.y) * CGFloat(scale))
                         let alpha = bitmap.colorAt(x: x, y: y)?.alphaComponent ?? -1
-                        let expected = settings.backgroundAlpha / settings.contentAlpha
+                        let expected = settings.backgroundAlpha / panel.alphaValue
                         check(panel.face.cardLayer?.shadowOpacity ?? 0 > 0 && abs(alpha - expected) <= 1.5 / 255,
                               "\(appearance.rawValue) \(scale)x \(space.rawValue) \(cropped ? "offset" : "full") snapshot composites the shadow and card once at quantized relative alpha (actual \(alpha), expected \(expected))")
                         if !cropped { fullBitmap = bitmap }
