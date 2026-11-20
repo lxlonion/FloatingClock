@@ -15,7 +15,6 @@ final class CheckTimerNotifications: TimerNotificationScheduling {
 }
 
 enum RuntimeChecks {
-    /// Exercises the real AppKit menu targets and panel without touching user preferences.
     static func run() -> Int32 {
         let suite = "FloatingClock.smoke.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -616,7 +615,6 @@ enum RuntimeChecks {
             allSwitchesSucceeded = allSwitchesSucceeded && timers.timers[0].inputKind == .targetTime && targetRow.kindButton.image != nil && targetRow.targetInput.hours.field.currentEditor() != nil
         }
         check(allSwitchesSucceeded, "repeated duration-to-target switches remain stable with an active numeric field")
-        // Exercise the real field editor and play action against a fixed local time.
         let localNow = Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: 15, hour: 18, minute: 34))!
         timerPanel.makeFirstResponder(nil)
         timers.setInputKind(targetRow.id, kind: .duration)
@@ -885,7 +883,6 @@ enum RuntimeChecks {
                 abs(a.blueComponent - b.blueComponent) < 0.01
         }
 
-        // Compare the rendered live card layer itself, not a replacement path.
         panel.face.layoutSubtreeIfNeeded()
         func cardBitmap() -> NSBitmapImageRep {
             let layer = panel.face.cardLayer!
@@ -926,7 +923,6 @@ enum RuntimeChecks {
                     settings.transparency = 0
                     settings.origin = StoredPoint(x: screen.midX - size / 2,
                                                   y: above ? screen.minY + 16 : screen.maxY - size - 40)
-                    // A new panel is not needed: move the existing dial to the requested screen quadrant.
                     panel.setFrameOrigin(CGPoint(x: settings.origin!.x, y: settings.origin!.y))
                     panel.apply(settings)
                     let radius = panel.face.cardCornerRadius
@@ -1160,8 +1156,6 @@ enum RuntimeChecks {
                 let py = Int((panel.face.bounds.height - y) * CGFloat(bitmap.pixelsHigh) / panel.face.bounds.height)
                 return bitmap.colorAt(x: px, y: py)?.alphaComponent ?? -1
             }
-            // cacheDisplay captures backing pixels before the WindowServer
-            // applies window opacity. Include that final composition exactly once.
             let background = alpha(x: card.midX - 60, y: card.midY) * panel.alphaValue
             let hub = alpha(x: card.midX, y: card.midY) * panel.alphaValue
             check(abs(background - settings.backgroundAlpha) < 0.02 && abs(hub - settings.contentAlpha) < 0.02,
@@ -1243,8 +1237,6 @@ enum RuntimeChecks {
             var directionMatches = true
             var entryMatches = true
             var footerStaysAtBottom = true
-            // Visit every quadrant, then cross the midline repeatedly without
-            // releasing the mouse. Every assertion precedes mouseUp.
             for (dx, dy) in [(-1.0, 80.0), (1, 80), (-1, -80), (1, -80), (1, 1), (1, -1), (1, 1)] {
                 let desired = CGRect(x: screen.midX + dx * 150 - start.width / 2,
                                      y: screen.midY + dy - start.height / 2, width: start.width, height: start.height)
@@ -1330,8 +1322,6 @@ enum RuntimeChecks {
             panel.face.layoutSubtreeIfNeeded()
         }
         func step(_ input: TimerNumberInput, by direction: Int) -> Bool {
-            // NSStepper changes its own value before dispatching the target action.
-            // Derive the next value from the control, so stale editing state fails.
             input.stepper.integerValue += direction
             return input.stepper.sendAction(input.stepper.action, to: input.stepper.target)
         }
@@ -1517,7 +1507,6 @@ enum RuntimeChecks {
         }
     }
 
-    /// Render the real settings controls without opening a window or changing preferences.
     static func renderDocumentationPreviews(to directory: String) throws {
         try renderStylePreviews(to: directory)
         try renderQuickPreviews(to: directory)

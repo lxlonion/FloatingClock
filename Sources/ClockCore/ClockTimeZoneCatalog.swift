@@ -35,8 +35,6 @@ private struct TimeZoneRule: Hashable {
             }
             cursor = date.addingTimeInterval(1)
         }
-        // A region that has permanently adopted its former summer offset can
-        // share the same choice as any region now keeping that offset.
         initial = changes.isEmpty ? TimeZoneState(zone, at: start, ignoringDaylightSavingTime: true) : startingState
         transitions = changes
     }
@@ -99,7 +97,6 @@ public struct ClockTimeZoneOption: Equatable {
     }
 }
 
-/// Group places whose clocks follow the same rules over the next three years.
 public struct ClockTimeZoneCatalog {
     public static let shared = Self()
     public let options: [ClockTimeZoneOption]
@@ -159,7 +156,6 @@ public struct ClockTimeZoneCatalog {
 
     public func option(for identifier: String) -> ClockTimeZoneOption? {
         guard let zone = TimeZone(identifier: identifier) else { return nil }
-        // Foundation's fixed offsets and the Etc aliases have their own picker.
         if identifier.hasPrefix("Etc/") || identifier == "GMT" || identifier == "UTC" ||
             identifier.hasPrefix("GMT+") || identifier.hasPrefix("GMT-") ||
             identifier.hasPrefix("UTC+") || identifier.hasPrefix("UTC-") {

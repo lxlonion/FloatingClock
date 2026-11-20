@@ -39,7 +39,6 @@ final class ClockTimerTests: XCTestCase {
         var timer = ClockTimer()
         timer.input = "1分钟"
         try timer.start(at: now)
-        // Stopping before the UI's next tick must first account for the crossing.
         timer.pause(at: now.addingTimeInterval(75))
         XCTAssertTrue(timer.isOvertime)
         XCTAssertEqual(timer.state, .paused)

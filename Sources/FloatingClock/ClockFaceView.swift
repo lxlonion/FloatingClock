@@ -46,8 +46,6 @@ final class ClockFaceView: NSView {
         let pixelSize: CGSize
         let colorSpace: CGColorSpace?
     }
-    // One entry per face: resizing or changing settings replaces the old layer
-    // rather than retaining every size, date and minute ever displayed.
     private var staticDialCache: (key: StaticDialKey, layer: CGLayer)?
     private(set) var staticDialRenderCount = 0
     private var hoverTracking: NSTrackingArea?
@@ -58,9 +56,6 @@ final class ClockFaceView: NSView {
     var compositingAlpha: CGFloat { max(settings.backgroundAlpha, settings.contentAlpha) }
     var relativeContentAlpha: CGFloat { settings.contentAlpha / compositingAlpha }
 
-    // Keep callers of NSView's public invalidation API working as well as the
-    // explicit dial invalidation below. Do not read NSView's getter after set:
-    // this non-drawing parent may already report false.
     override var needsDisplay: Bool {
         get { super.needsDisplay }
         set {
@@ -95,8 +90,6 @@ final class ClockFaceView: NSView {
         invalidateDial()
     }
 
-    // AppKit's view cache includes the drawn dial and native controls, but not
-    // a layer's background. Composite the very same live layer underneath it.
     override func cacheDisplay(in rect: NSRect, to bitmap: NSBitmapImageRep) {
         layoutSubtreeIfNeeded()
         super.cacheDisplay(in: rect, to: bitmap)
@@ -109,9 +102,6 @@ final class ClockFaceView: NSView {
                                     bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
         group.scaleBy(x: CGFloat(bitmap.pixelsWide) / rect.width, y: CGFloat(bitmap.pixelsHigh) / rect.height)
         group.translateBy(x: background.frame.minX - rect.minX, y: background.frame.minY - rect.minY)
-        // render(in:) applies the receiver opacity to individual primitives.
-        // Render its opaque form, then restore it before committing this
-        // non-animated transaction so the live window never changes opacity.
         let opacity = layer.opacity
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -123,7 +113,6 @@ final class ClockFaceView: NSView {
         context.saveGState()
         context.clear(CGRect(origin: .zero, size: rect.size))
         context.saveGState()
-        // Apply the original opacity once to the complete shadow and fill.
         context.setAlpha(CGFloat(opacity))
         context.draw(backgroundImage, in: CGRect(origin: .zero, size: rect.size))
         context.restoreGState()
@@ -182,8 +171,6 @@ final class ClockFaceView: NSView {
     override func mouseDragged(with event: NSEvent) {
         guard !settings.isLocked, let window, let dragStart else { return }
         let pointer = window.convertPoint(toScreen: event.locationInWindow)
-        // Anchor to the dial, since moving the timer tray changes the window's
-        // origin underneath an ongoing drag.
         onDragMoved?(dragStart.dial.offsetBy(dx: pointer.x - dragStart.pointer.x, dy: pointer.y - dragStart.pointer.y))
     }
 
@@ -204,7 +191,6 @@ final class ClockFaceView: NSView {
         invalidateDial()
     }
 
-    // The uncached path is also used by native rendering checks as a pixel reference.
     func drawDial(_ dirtyRect: NSRect, usesStaticCache: Bool = true) {
         NSColor.clear.setFill()
         dirtyRect.fill(using: .copy)
@@ -248,14 +234,10 @@ final class ClockFaceView: NSView {
 
     private func drawCachedStaticDial(in context: CGContext, card: CGRect, palette: ClockPalette, readout: ClockReadout) {
         let transform = context.ctm
-        // Keep AppKit's original text orientation and rasterization for uncommon
-        // flipped/rotated targets. The live dial is unflipped and uses the cache.
         guard transform.b == 0, transform.c == 0, NSGraphicsContext.current?.isFlipped != true else {
             drawStaticDial(card: card, palette: palette, readout: readout)
             return
         }
-        // Align the cache to destination pixels, including fractional card origins
-        // and cropped snapshots. Never resample a 1x cache onto a 2x display.
         let pixelRect = context.convertToDeviceSpace(card).integral
         let rasterRect = context.convertToUserSpace(pixelRect)
         let key = StaticDialKey(card: card, rasterRect: rasterRect, style: settings.style, dark: palette.dark,
@@ -264,13 +246,10 @@ final class ClockFaceView: NSView {
                                 minute: settings.showsMinuteNumerals ? readout.minute : nil,
                                 minuteSize: settings.showsMinuteNumerals ? settings.minuteNumeralSize : nil,
                                 minuteAlpha: settings.showsMinuteNumerals ? settings.minuteNumeralAlpha : nil,
-                                // A window's default device transform may carry
-                                // Retina scaling that is absent from its CTM.
                                 pixelSize: pixelRect.size,
                                 colorSpace: context.colorSpace ?? window?.colorSpace?.cgColorSpace)
         if staticDialCache?.key != key {
             staticDialCache = nil
-            // Size the layer in device pixels, then restore point coordinates.
             let pixelSize = key.pixelSize
             if let layer = CGLayer(context, size: pixelSize, auxiliaryInfo: nil), let layerContext = layer.context {
                 layerContext.scaleBy(x: pixelSize.width / rasterRect.width, y: pixelSize.height / rasterRect.height)
@@ -286,7 +265,6 @@ final class ClockFaceView: NSView {
         if let cache = staticDialCache {
             context.draw(cache.layer, in: cache.key.rasterRect)
         } else {
-            // Allocation failure must not make the dial disappear.
             drawStaticDial(card: card, palette: palette, readout: readout)
         }
     }

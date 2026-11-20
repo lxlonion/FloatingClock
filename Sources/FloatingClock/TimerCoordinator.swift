@@ -49,7 +49,6 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
                     DispatchQueue.main.async {
                         guard let self else { return }
                         guard self.generations[timer.id] == generation else {
-                            // Deletion/stop can race the asynchronous notification registration.
                             self.center.removePendingNotificationRequests(withIdentifiers: [requestID])
                             self.center.removeDeliveredNotifications(withIdentifiers: [requestID])
                             return
@@ -76,7 +75,6 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
     }
 }
 
-/// Owns timekeeping independently of the clock's visibility and drawing timer.
 final class TimerCoordinator {
     private(set) var timers: [ClockTimer]
     private(set) var errors: [UUID: String] = [:]
@@ -168,7 +166,6 @@ final class TimerCoordinator {
         errors[id] = nil
         switch timers[index].state {
         case .running:
-            // A click at/after the deadline must not withdraw an already due notification.
             timers[index].pause(at: now)
             if !timers[index].isOvertime {
                 notifications.cancel(id)

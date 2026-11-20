@@ -20,7 +20,6 @@ private final class TimerNumberFormatter: NumberFormatter, @unchecked Sendable {
     }
 }
 
-/// A number field with a native up/down stepper and a persistent unit label.
 final class TimerNumberInput: NSView, NSTextFieldDelegate {
     let field = NSTextField(string: "0")
     let stepper = NSStepper()
@@ -130,7 +129,6 @@ final class TimerNumberInput: NSView, NSTextFieldDelegate {
 
     @objc private func step() {
         let selected = stepper.integerValue
-        // End editing without normalizing the old value before this step is applied.
         isStepping = true
         defer { isStepping = false }
         guard window?.makeFirstResponder(nil) != false else { return }
@@ -206,8 +204,6 @@ final class TimerTimeInput: NSStackView {
         let displayedHours = min(9_999, whole / 3600)
         let remainingMinutes = (whole - displayedHours * 3600) / 60
         let displayedMinutes = min(9_999, remainingMinutes)
-        // Older versions accepted durations larger than both four-digit fields.
-        // Keep the exact value until the user changes one of the displayed numbers.
         originalDuration = remainingMinutes > displayedMinutes ? (seconds, displayedHours, displayedMinutes) : nil
         hours.update(value: displayedHours)
         minutes.update(value: displayedMinutes)
@@ -228,7 +224,6 @@ final class TimerTimeInput: NSStackView {
             input = "\(total)秒"
         }
         onChange?(input)
-        // End-editing callbacks can arrive before AppKit detaches the field editor.
         let revision = updateRevision
         DispatchQueue.main.async { [weak self] in
             guard let self, self.updateRevision == revision else { return }
@@ -237,7 +232,6 @@ final class TimerTimeInput: NSStackView {
     }
 
     private func hourTextChanged(_ text: String) {
-        // Also accept all four digits in one paste/input event.
         if text.count == 4, text.allSatisfy({ $0.isASCII && $0.isNumber }),
            let hour = Int(text.prefix(2)), let minute = Int(text.suffix(2)),
            (0...23).contains(hour), (0...59).contains(minute) {

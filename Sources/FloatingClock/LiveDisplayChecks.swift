@@ -1,8 +1,6 @@
 import AppKit
 import ClockCore
 
-/// End-to-end checks of the WindowServer's live window, before any view cache.
-/// Run in a separate process with --live-display-test <evidence-directory>.
 enum LiveDisplayChecks {
     static func run(to directory: String) -> Never {
         do { try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true) }
@@ -14,8 +12,6 @@ enum LiveDisplayChecks {
         settings.showsSeconds = true
         let panel = ClockPanel(settings: settings)
         panel.mouseLocationProvider = { CGPoint(x: -100_000, y: -100_000) }
-        // Stages below control hover explicitly; physical cursor events must
-        // not overwrite the simulated date occlusion between captures.
         panel.face.onHoverChanged = { _ in }
         let calendar = Calendar.current
         let date = calendar.date(from: DateComponents(year: 2026, month: 11, day: 14, hour: 10, minute: 15, second: 36))!
@@ -78,9 +74,6 @@ enum LiveDisplayChecks {
             return count
         }
         func warmOnePixelPerPointCache() {
-            // A real Retina window can have an identity CTM and a 2x default
-            // device transform. This bitmap also has an identity CTM, but 1x
-            // device density. Match the color space to isolate the density key.
             let bounds = panel.face.bounds
             let space = panel.colorSpace?.cgColorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
             let context = CGContext(data: nil, width: Int(bounds.width), height: Int(bounds.height),
@@ -150,8 +143,6 @@ enum LiveDisplayChecks {
             (0.5, {
                 capture("06-numerals-halo")
                 let changed = differences(images["05-numerals-low"], images["06-numerals-halo"], in: dialRect)
-                // At 10:15 the hour hand crosses the 1. A narrow strip just
-                // outside its stroke changes from numeral ink to face color.
                 let angle = ClockAngles(date: date).hour
                 var haloPixels = 0
                 for distance in stride(from: 20.0, through: 52.0, by: 0.5) {
@@ -344,7 +335,6 @@ enum LiveDisplayChecks {
                 let rect = panel.face.convert(field.bounds, from: field).insetBy(dx: 1, dy: 1)
                 let dial = panel.face.dialCard
                 let background = brightness(images["19-timer-opaque"], CGPoint(x: dial.midX - 60, y: dial.midY))
-                // The card extends behind the tray, so test the editor's contrast over the card.
                 func contrast(_ image: NSBitmapImageRep?) -> CGFloat {
                     guard image != nil else { return 0 }
                     var darkest = background

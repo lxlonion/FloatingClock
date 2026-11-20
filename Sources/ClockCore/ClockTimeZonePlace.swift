@@ -1,4 +1,3 @@
-/// Representative names in display order for each group of equivalent clocks.
 struct ClockTimeZonePlace {
     let identifier: String
     let name: String

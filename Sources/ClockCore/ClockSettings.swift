@@ -63,7 +63,6 @@ public struct ClockSettings: Codable, Equatable {
         appearance = try values.decodeIfPresent(ClockAppearance.self, forKey: .appearance) ?? appearance
         let savedStyle = try values.decodeIfPresent(String.self, forKey: .style)
         style = savedStyle.flatMap(ClockStyle.init(rawValue:)) ?? .minimal
-        // The removed third style becomes style one with the shared minute layer enabled.
         showsMinuteNumerals = try values.decodeIfPresent(Bool.self, forKey: .showsMinuteNumerals) ?? (savedStyle == "style3")
         minuteNumeralOpacity = try values.decodeIfPresent(Double.self, forKey: .minuteNumeralOpacity) ?? minuteNumeralOpacity
         minuteNumeralSize = try values.decodeIfPresent(Double.self, forKey: .minuteNumeralSize) ?? minuteNumeralSize
@@ -136,7 +135,6 @@ public struct ClockSettings: Codable, Equatable {
     private var linkedContentTransparency: Double {
         let overall = overallTransparency
         let progress = overall / 90
-        // The compensation peaks at 10 percentage points halfway through the range.
         return overall - 40 * progress * (1 - progress)
     }
 
@@ -147,7 +145,6 @@ public struct ClockSettings: Codable, Equatable {
     public func normalized() -> Self {
         var result = self
         result.transparency = overallTransparency
-        // Preserve manual values when normalizing the stored overall slider position.
         if usesCustomTransparency {
             result.customTransparency = CustomTransparency(content: contentTransparency, background: backgroundTransparency)
         }

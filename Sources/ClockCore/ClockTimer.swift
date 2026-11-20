@@ -41,7 +41,6 @@ public enum TimerInputError: Error, LocalizedError {
 public enum TimerInputParser {
     public static let maximumDuration: TimeInterval = 999_999 * 60
 
-    /// Bare numbers mean minutes; colon notation means MM:SS or HH:MM:SS.
     public static func duration(_ input: String) throws -> TimeInterval {
         let text = input.lowercased().filter { !$0.isWhitespace }
         guard !text.isEmpty else { throw TimerInputError.invalidDuration }
@@ -119,7 +118,6 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
     public private(set) var duration: TimeInterval = 0
     public private(set) var accumulated: TimeInterval = 0
     public private(set) var startedAt: Date?
-    // Optional so timers saved before overtime was introduced still decode.
     private var overtime: Bool?
     public var isOvertime: Bool { overtime == true }
     public var countsDown: Bool { mode == .countdown && !isOvertime }
@@ -186,8 +184,6 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
 
     @discardableResult public mutating func finishIfNeeded(at date: Date) -> Bool {
         guard state == .running, countsDown, seconds(at: date) <= 0 else { return false }
-        // Keep the original start and elapsed time: late ticks, sleep and relaunch
-        // must include all time since the deadline, rather than restarting at zero.
         overtime = true
         return true
     }

@@ -6,7 +6,6 @@ public struct TimerAttachmentLayout {
     public let trayFrame: CGRect
     public let isAbove: Bool
 
-    /// Keep the dial anchored and grow toward the center of its own display.
     public init(clock: CGRect, trayHeight: CGFloat, screen: CGRect, footerHeight: CGFloat = 0,
                 constrainToScreen: Bool = true) {
         guard trayHeight > 0 else {
@@ -25,8 +24,6 @@ public struct TimerAttachmentLayout {
         let height = clock.height + trayHeight + footerHeight
         let preferredX = clock.midX - width / 2
         let preferredY = clock.minY - (isAbove ? footerHeight : trayHeight + footerHeight)
-        // While dragging, preserve the dial's screen position even if the tray
-        // crosses an edge. Constrain the complete panel when the drag finishes.
         let x = constrainToScreen ? min(max(preferredX, screen.minX), max(screen.minX, screen.maxX - width)) : preferredX
         let y = constrainToScreen ? min(max(preferredY, screen.minY), max(screen.minY, screen.maxY - height)) : preferredY
         frame = CGRect(x: x, y: y, width: width, height: height)

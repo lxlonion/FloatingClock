@@ -124,8 +124,6 @@ enum DialCacheChecks {
             face.dialFrame = CGRect(x: 0, y: 120, width: 284, height: 284)
         }
 
-        // Exercise actual raster density, pixel phase and target color space,
-        // not just key equality. Each comparison uses the original direct draw.
         for appearance in [ClockAppearance.light, .dark] {
             for size in [260.0, 300.5, 420] {
                 face.frame.size = CGSize(width: size + 25, height: size + 25)
@@ -175,8 +173,6 @@ enum DialCacheChecks {
             settings.appearance = appearance
             face.settings = settings
             for scale in [CGFloat(1), 2] {
-                // Flipped targets retain the original AppKit drawing path;
-                // returning to the live orientation must keep its cached layer.
                 for flipped in [false, true, false] {
                     let previousBuilds = face.staticDialRenderCount
                     let image = render(scale: scale, flipped: flipped)
@@ -191,7 +187,6 @@ enum DialCacheChecks {
                 }
             }
         }
-        // Clip through actual ticks/numerals, not just the outer padding.
         face.viewDidChangeBackingProperties()
         _ = render(clip: CGRect(x: face.bounds.midX - 20, y: 0, width: 40, height: face.bounds.midY))
         builds = face.staticDialRenderCount

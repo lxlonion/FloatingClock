@@ -1,6 +1,5 @@
 import CoreGraphics
 
-/// Card inset is distinct from ClockLayout.padding, which reserves shadow space.
 enum CardGeometry {
     static let outerRadius: CGFloat = 32
     static let inset: CGFloat = 8

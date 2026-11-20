@@ -33,8 +33,6 @@ public struct ClockTimeZoneSettings: Codable, Equatable {
     public func timeZone(at date: Date) -> TimeZone {
         let zone = TimeZone(identifier: identifier) ?? TimeZone(identifier: Self.pacific.identifier)!
         guard !usesDaylightSavingTime else { return zone }
-        // Remove the actual regional DST adjustment, not a hard-coded hour:
-        // some regions use a half-hour adjustment or negative winter DST.
         let standardOffset = zone.secondsFromGMT(for: date) - Int(zone.daylightSavingTimeOffset(for: date))
         return TimeZone(secondsFromGMT: standardOffset) ?? zone
     }

@@ -8,7 +8,6 @@ public enum ClockCorner: String, CaseIterable {
 }
 
 public enum QuickAccessLayout {
-    /// Choose the side away from the nearest screen edge, keeping the vertical half.
     public static func corner(for clock: CGRect, on screen: CGRect) -> ClockCorner {
         let clockIsLeft = clock.midX < screen.midX
         let clockIsBottom = clock.midY < screen.midY

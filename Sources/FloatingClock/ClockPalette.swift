@@ -1,7 +1,6 @@
 import AppKit
 import ClockCore
 
-/// Resolved, non-dynamic sRGB colors for the clock and its attached controls.
 struct ClockPalette {
     let dark: Bool
 

@@ -79,7 +79,6 @@ final class SettingsSliderRow: NSView {
                 high.trailingAnchor.constraint(equalTo: trailingAnchor)
             ])
         } else {
-            // AppKit can draw below the slider's alignment rect.
             slider.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -slider.alignmentRectInsets.bottom).isActive = true
         }
         update(value)

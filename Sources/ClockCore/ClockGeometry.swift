@@ -23,7 +23,6 @@ public enum ClockLayout {
     public static let minimumFaceSize: CGFloat = minimumPanelWidth - padding * 2
     public static let maximumFaceSize: CGFloat = 420
 
-    /// Keep the whole clock on a connected display, including displays with negative origins.
     public static func clampedOrigin(_ origin: CGPoint, size: CGFloat, screens: [CGRect]) -> CGPoint {
         guard !screens.isEmpty else { return origin }
         let frame = CGRect(origin: origin, size: CGSize(width: size, height: size))

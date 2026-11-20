@@ -6,7 +6,6 @@ PREVIEW_DIR="$PROJECT_DIR/work/documentation-previews"
 APP_OUTPUT_DIR="$PROJECT_DIR/work/documentation-build"
 IMAGE_DIR="$PROJECT_DIR/docs/images"
 
-# Keep the installed widget in dist/ untouched while generating documentation assets.
 FLOATING_CLOCK_OUTPUT_DIR="$APP_OUTPUT_DIR" bash "$PROJECT_DIR/scripts/build.sh"
 mkdir -p "$PREVIEW_DIR" "$IMAGE_DIR"
 "$APP_OUTPUT_DIR/FloatingClock.app/Contents/MacOS/FloatingClock" --render-documentation-previews "$PREVIEW_DIR"

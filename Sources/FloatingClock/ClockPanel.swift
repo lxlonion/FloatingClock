@@ -90,8 +90,6 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         let origin = CGPoint(x: previousDial.midX - side / 2, y: previousDial.midY - side / 2)
         let clamped = ClockLayout.clampedOrigin(origin, size: side, screens: NSScreen.screens.map(\.visibleFrame))
         face.settings = settings
-        // Apply the greater opacity at the window so either group can fade
-        // independently while preserving a uniform fade where their values match.
         alphaValue = face.compositingAlpha
         timerTray.alphaValue = face.relativeContentAlpha
         timerHint.alphaValue = face.relativeContentAlpha
@@ -270,8 +268,6 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
     private func startPointerTracking() {
         pointerTracker?.invalidate()
         pointerTracker = nil
-        // The locked panel passes mouse events through, so its tracking areas
-        // cannot report entry/exit. Poll position without intercepting clicks.
         guard settings.isLocked && isVisible else { return }
         let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
             guard let self else { return }

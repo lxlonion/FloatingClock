@@ -1,7 +1,6 @@
 import AppKit
 import CoreText
 
-/// Comic Sans minute outlines, centered by visible ink rather than the font's line box.
 enum MinuteNumerals {
     static let font = NSFont(name: "ComicSansMS", size: 100) ??
         NSFont(name: "Comic Sans MS", size: 100) ?? NSFont.systemFont(ofSize: 100)
@@ -56,7 +55,6 @@ enum MinuteNumerals {
         let outline = shape.path
         let bounds = outline.boundingBoxOfPath
         let scale = card.width / 224
-        // The major ticks begin at outerRadius - 9; leave a small gap inside them.
         let availableRadius = card.width * 0.402 - 14 * scale
         let factor = availableRadius / shape.radius * CGFloat(size / 100)
         var transform = CGAffineTransform(a: factor, b: 0, c: 0, d: factor,

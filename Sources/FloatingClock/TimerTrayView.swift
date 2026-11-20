@@ -2,8 +2,6 @@ import AppKit
 import ClockCore
 
 final class TimerActionButton: NSButton {
-    // Borderless image buttons have different optical insets from text buttons.
-    // Use their physical bounds so each compact column has equal, separate hits.
     override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
 }
 
@@ -175,8 +173,6 @@ final class TimerRowView: NSView {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        // Parent appearance callbacks can run before this row inherits the new
-        // appearance. Resolve its colors here, without refreshing timer state.
         applyAppearance()
     }
 
@@ -209,7 +205,6 @@ final class TimerRowView: NSView {
     @objc private func deleteTimer() { window?.makeFirstResponder(nil); onDelete?() }
     @objc private func resetTimer() { onReset?() }
     @objc private func kindChanged() {
-        // Capture the new mode before ending editing can refresh the row.
         let selected: ClockTimerInput = currentInputKind == .duration ? .targetTime : .duration
         isChangingKind = true
         if window?.makeFirstResponder(nil) == false { window?.endEditing(for: nil) }
@@ -262,8 +257,6 @@ final class TimerTrayView: NSView {
                 addSubview(row)
                 return row
             }
-            // Publish the new row list before detaching views. Ending an input's
-            // editing session can synchronously refresh the tray again.
             let remaining = Set(rows.map(\.id))
             for row in previousRows where !remaining.contains(row.id) {
                 row.onInput = nil
