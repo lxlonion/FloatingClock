@@ -19,7 +19,6 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
     private var footerHeight: CGFloat = 0
     var onPositionChanged: ((CGPoint) -> Void)?
     var onQuickMenuRequested: ((NSView) -> Void)?
-    // Allows the actual window layout path to be exercised against a simulated display.
     var layoutScreenFrameOverride: CGRect? { didSet { layoutPanel(anchoredAt: clockScreenFrame) } }
     var mouseLocationProvider: () -> CGPoint = { NSEvent.mouseLocation }
 
@@ -180,8 +179,6 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         layingOut = true
         defer { layingOut = false }
         let screenFrame = layoutScreenFrame(for: dial)
-        // Leave enough room for one complete timer row. This is a display-only
-        // size; settings.faceSize remains the user's preferred size.
         let minimumTrayViewport = min(trayHeight, 80)
         let maximumSide = max(1, min(screenFrame.width, screenFrame.height - footerHeight - minimumTrayViewport))
         let preferredSide = settings.faceSize + ClockLayout.padding * 2

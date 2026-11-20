@@ -23,7 +23,6 @@ extension TimerNotificationScheduling {
     func prepareForTermination(_ completion: @escaping () -> Void) -> Bool { false }
 }
 
-// This boundary keeps the production scheduling path testable without requesting system permission.
 struct TimerDeliveredNotification {
     let request: UNNotificationRequest
     let date: Date
@@ -167,13 +166,10 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
                 for request in requests {
                     if let id = self.timerID(request.identifier) { self.known[id, default: []].insert(request.identifier) }
                 }
-                // Do not wait for the delivered query before canceling a pending
-                // request: it could fire while that unrelated callback is delayed.
                 for id in self.recoveryCancellations { self.removeKnown(id) }
                 for (id, schedule) in self.recoverySchedules where !self.recoveryCancellations.contains(id) {
                     self.remember(Array(self.known[id] ?? []), timer: schedule.timer)
                 }
-                // Include delivered requests that disappeared before the pending snapshot.
                 self.center.delivered { [weak self] delivered in
                     DispatchQueue.main.async {
                         guard let self else { return }
@@ -238,8 +234,6 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
         guard let deadline = timer.deadline else { return }
         let generation = UUID()
         let busy = inFlight[timer.id] ?? []
-        // The occurrence survives process restarts, so cancellation can identify an
-        // installed request without waiting for the system's pending snapshot.
         let stableID = identifier(timer.id, generation: timer.notificationOccurrenceID ?? generation)
         let requestID = (known[timer.id] ?? []).first(where: { !busy.contains($0) })
             ?? (busy.contains(stableID) ? identifier(timer.id, generation: generation) : stableID)
@@ -254,7 +248,6 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
                     return
                 }
                 if schedule.isRecovery {
-                    // Check again after authorization: an old alert can fire during either wait.
                     self.center.delivered { [weak self] delivered in
                         DispatchQueue.main.async {
                             guard let self, self.generations[timer.id] == generation else { return }
@@ -279,8 +272,6 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
         let delay = timer.inputKind == .targetTime ? deadline.timeIntervalSince(now()) :
             schedule.remaining - max(0, continuousTime() - schedule.scheduledAt)
         if delay <= 0, schedule.isRecovery, !(protectedRecoveryRequests[timer.id] ?? []).isEmpty {
-            // A credible pending request can fire after the delivered snapshot. Do not
-            // issue an immediate duplicate while the system processes that request.
             complete(schedule, generation: generation, message: nil)
             return
         }
@@ -288,8 +279,6 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
         content.title = "时间到了"
         content.body = body(for: timer, deadline: deadline)
         content.sound = .default
-        // The deadline and kind describe the occurrence; interval nextTriggerDate is not
-        // its installation time and must never be used to infer this metadata.
         var metadata: [String: Any] = [deadlineKey: deadline.timeIntervalSince1970, kindKey: timer.inputKind.rawValue]
         if let occurrence = timer.notificationOccurrenceID { metadata[occurrenceKey] = occurrence.uuidString }
         content.userInfo = metadata
@@ -308,7 +297,6 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
             trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, delay), repeats: false)
         }
         let request = UNNotificationRequest(identifier: requestID, content: content, trigger: trigger)
-        // Persist an opaque non-derived ID before submitting it to the system.
         remember([requestID], timer: timer)
         inFlight[timer.id, default: []].insert(requestID)
         center.add(request) { [weak self] error in
@@ -377,8 +365,6 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
         finishCancellationDrainIfPossible()
     }
 
-    // Only cancellations with unresolved system work defer termination. This also
-    // waits for a resumed timer's replacement to be installed before quitting.
     func prepareForTermination(_ completion: @escaping () -> Void) -> Bool {
         guard cancellationDrainRequired else { return false }
         terminationWaiters.append(completion)
@@ -411,7 +397,6 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
                   abs(stored - deadline.timeIntervalSince1970) < 0.001 else { return false }
             return request.trigger is UNCalendarNotificationTrigger
         }
-        // Same occurrence survives a wall-clock reanchor; the interval itself is unchanged.
         return request.trigger is UNTimeIntervalNotificationTrigger
     }
 
@@ -435,8 +420,6 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
         if let requestOccurrence = request.content.userInfo[occurrenceKey] as? String {
             return requestOccurrence == timer.notificationOccurrenceID?.uuidString
         }
-        // Legacy requests have no occurrence ID. Only a migrated legacy archive can
-        // claim one, and only after its expected deadline with corroborating content.
         guard let deadline = timer.legacyNotificationDeadline, now() >= deadline,
               abs(delivered.date.timeIntervalSince(deadline)) <= 5 else { return false }
         let legacyBody = timer.inputKind == .targetTime ? "已到达设定时间 \(timer.input)。" :
@@ -624,8 +607,6 @@ final class TimerCoordinator {
     private func tick(at now: Date, instant: TimerInstant?) {
         var changedTimer = false
         for index in timers.indices {
-            // Persist a fresh wall anchor after a clock change, so recovery on a
-            // later boot has the best available estimate of the elapsed time.
             if let instant, timers[index].state == .running, timers[index].inputKind == .duration,
                abs(timers[index].elapsed(at: now, instant: instant) - timers[index].elapsed(at: now)) > 1 {
                 timers[index].reanchor(at: now, instant: instant)
