@@ -9,12 +9,14 @@ protocol TimerNotificationScheduling: AnyObject {
     func cancel(_ id: UUID)
     func endRecovery()
     func preserveDueNotification(_ id: UUID)
+    func prepareForTermination(_ completion: @escaping () -> Void) -> Bool
 }
 
 extension TimerNotificationScheduling {
     func beginRecovery() {}
     func endRecovery() {}
     func preserveDueNotification(_ id: UUID) {}
+    func prepareForTermination(_ completion: @escaping () -> Void) -> Bool { false }
 }
 
 // This boundary keeps the production scheduling path testable without requesting system permission.
@@ -57,6 +59,12 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
     private var generations: [UUID: UUID] = [:]
     private var known: [UUID: Set<String>] = [:]
     private var inFlight: [UUID: Set<String>] = [:]
+    private var occurrenceIDs: [UUID: UUID] = [:]
+    private var pendingSubmissions: [UUID: UUID] = [:]
+    private var drainTimerIDs: Set<UUID> = []
+    private var canceledInFlight: Set<String> = []
+    private var cancellationDrainRequired = false
+    private var terminationWaiters: [() -> Void] = []
     private var recovering = false
     private var dueIDs: Set<UUID> = []
     private var recoverySchedules: [UUID: Schedule] = [:]
@@ -136,10 +144,12 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
                 submit(schedule)
             }
         }
+        finishCancellationDrainIfPossible()
     }
 
     func schedule(_ timer: ClockTimer, completion: @escaping (String?) -> Void) {
         guard let deadline = timer.deadline else { return }
+        occurrenceIDs[timer.id] = timer.notificationOccurrenceID
         let schedule = Schedule(timer: timer, completion: completion, remaining: deadline.timeIntervalSince(now()),
                                 scheduledAt: continuousTime(), isRecovery: recovering && !recoveryCancellations.contains(timer.id))
         if recovering { recoverySchedules[timer.id] = schedule; return }
@@ -151,13 +161,19 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
         guard let deadline = timer.deadline else { return }
         let generation = UUID()
         let busy = inFlight[timer.id] ?? []
-        let requestID = (known[timer.id] ?? []).first(where: { !busy.contains($0) }) ?? identifier(timer.id, generation: generation)
+        // The occurrence survives process restarts, so cancellation can identify an
+        // installed request without waiting for the system's pending snapshot.
+        let stableID = identifier(timer.id, generation: timer.notificationOccurrenceID ?? generation)
+        let requestID = (known[timer.id] ?? []).first(where: { !busy.contains($0) })
+            ?? (busy.contains(stableID) ? identifier(timer.id, generation: generation) : stableID)
+        if let previous = generations[timer.id] { pendingSubmissions.removeValue(forKey: previous) }
         generations[timer.id] = generation
+        pendingSubmissions[generation] = timer.id
         center.authorize { [weak self] granted, error in
             DispatchQueue.main.async {
                 guard let self, self.generations[timer.id] == generation else { return }
                 guard granted, error == nil else {
-                    schedule.completion("通知未开启，请在系统设置的「通知」中允许漂浮时钟。")
+                    self.complete(schedule, generation: generation, message: "通知未开启，请在系统设置的「通知」中允许漂浮时钟。")
                     return
                 }
                 if schedule.isRecovery {
@@ -168,7 +184,7 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
                             if delivered.contains(where: { self.matchesDelivered($0, timer: timer) }) {
                                 self.center.removePending(Array(self.known[timer.id] ?? []))
                                 self.known[timer.id] = []
-                                schedule.completion(nil)
+                                self.complete(schedule, generation: generation, message: nil)
                             } else {
                                 self.add(schedule, deadline: deadline, requestID: requestID, generation: generation)
                             }
@@ -188,7 +204,7 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
         if delay <= 0, schedule.isRecovery, !(protectedRecoveryRequests[timer.id] ?? []).isEmpty {
             // A credible pending request can fire after the delivered snapshot. Do not
             // issue an immediate duplicate while the system processes that request.
-            schedule.completion(nil)
+            complete(schedule, generation: generation, message: nil)
             return
         }
         let content = UNMutableNotificationContent()
@@ -220,13 +236,16 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.inFlight[timer.id]?.remove(requestID)
+                self.canceledInFlight.remove(requestID)
                 guard self.generations[timer.id] == generation else {
-                    if self.known[timer.id]?.contains(requestID) == true { return }
-                    self.center.removePending([requestID])
-                    self.center.removeDelivered([requestID])
+                    if self.known[timer.id]?.contains(requestID) != true {
+                        self.center.removePending([requestID])
+                        self.center.removeDelivered([requestID])
+                    }
+                    self.finishCancellationDrainIfPossible()
                     return
                 }
-                if let error { schedule.completion("通知安排失败：\(error.localizedDescription)"); return }
+                if let error { self.complete(schedule, generation: generation, message: "通知安排失败：\(error.localizedDescription)"); return }
                 let old = self.known[timer.id] ?? []
                 self.known[timer.id] = [requestID]
                 self.center.removePending(Array(old.subtracting([requestID])))
@@ -240,12 +259,29 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
                         }
                     }
                 }
-                schedule.completion(nil)
+                self.complete(schedule, generation: generation, message: nil)
             }
         }
     }
 
+    private func complete(_ schedule: Schedule, generation: UUID, message: String?) {
+        pendingSubmissions.removeValue(forKey: generation)
+        schedule.completion(message)
+        finishCancellationDrainIfPossible()
+    }
+
     func cancel(_ id: UUID) {
+        if recovering || !(inFlight[id] ?? []).isEmpty {
+            cancellationDrainRequired = true
+            drainTimerIDs.insert(id)
+        }
+        if let generation = generations[id] { pendingSubmissions.removeValue(forKey: generation) }
+        canceledInFlight.formUnion(inFlight[id] ?? [])
+        if let occurrence = occurrenceIDs.removeValue(forKey: id) {
+            let stableID = identifier(id, generation: occurrence)
+            center.removePending([stableID])
+            center.removeDelivered([stableID])
+        }
         generations[id] = nil
         protectedRecoveryRequests[id] = nil
         dueIDs.remove(id)
@@ -254,6 +290,25 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
             recoverySchedules[id] = nil
         }
         removeKnown(id)
+        finishCancellationDrainIfPossible()
+    }
+
+    // Only cancellations with unresolved system work defer termination. This also
+    // waits for a resumed timer's replacement to be installed before quitting.
+    func prepareForTermination(_ completion: @escaping () -> Void) -> Bool {
+        guard cancellationDrainRequired else { return false }
+        terminationWaiters.append(completion)
+        return true
+    }
+
+    private func finishCancellationDrainIfPossible() {
+        guard cancellationDrainRequired, recoveryCancellations.isEmpty,
+              canceledInFlight.isEmpty, !pendingSubmissions.values.contains(where: { drainTimerIDs.contains($0) }) else { return }
+        cancellationDrainRequired = false
+        drainTimerIDs.removeAll()
+        let waiters = terminationWaiters
+        terminationWaiters.removeAll()
+        waiters.forEach { $0() }
     }
 
     private func removeKnown(_ id: UUID) {
@@ -457,6 +512,10 @@ final class TimerCoordinator {
         errors[id] = nil
         notificationErrors[id] = nil
         changed()
+    }
+
+    func prepareForTermination(_ completion: @escaping () -> Void) -> Bool {
+        notifications.prepareForTermination(completion)
     }
 
     func tick(at now: Date = Date()) {

@@ -65,6 +65,137 @@ final class TimerNotificationsTests: XCTestCase {
         return UNNotificationRequest(identifier: "FloatingClock.timer.\(timer.id.uuidString).\(UUID().uuidString)", content: content, trigger: trigger)
     }
 
+    func testCoordinatorRestoredCancellationRemovesInstalledOccurrenceBeforeSnapshot() throws {
+        for deleting in [false, true] {
+            let suite = "FloatingClock.cross-process.\(UUID())"
+            let defaults = UserDefaults(suiteName: suite)!
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let center = FakeNotificationCenter()
+            center.commitsAtAdd = true
+            var id: UUID!
+            var installed: String!
+            do {
+                let scheduler = TimerNotifications(center: center)
+                let coordinator = TimerCoordinator(store: ClockTimerStore(defaults: defaults), notifications: scheduler)
+                id = coordinator.add()!
+                coordinator.primaryAction(id)
+                flush()
+                center.finishAdd()
+                flush()
+                installed = try XCTUnwrap(center.added?.identifier)
+                XCTAssertEqual(installed, "FloatingClock.timer.\(id!.uuidString).\(coordinator.timers[0].notificationOccurrenceID!.uuidString)")
+            }
+            do {
+                let scheduler = TimerNotifications(center: center)
+                let coordinator = TimerCoordinator(store: ClockTimerStore(defaults: UserDefaults(suiteName: suite)!), notifications: scheduler)
+                coordinator.restore()
+                if deleting { coordinator.remove(id) } else { coordinator.primaryAction(id) }
+                XCTAssertNil(center.requests[installed])
+                var replied = false
+                XCTAssertTrue(coordinator.prepareForTermination { replied = true })
+                XCTAssertFalse(replied)
+                center.finishPending()
+                flush()
+                XCTAssertTrue(replied)
+            }
+            XCTAssertNil(center.requests[installed])
+        }
+    }
+
+    func testLegacyCancellationDefersQuitUntilSnapshotWithoutRemovingOtherTimers() throws {
+        let timer = try running()
+        let other = try running()
+        let old = oldRequest(timer)
+        let unrelated = oldRequest(other)
+        let center = FakeNotificationCenter()
+        center.requests[old.identifier] = old
+        center.requests[unrelated.identifier] = unrelated
+        let scheduler = TimerNotifications(center: center)
+        scheduler.beginRecovery()
+        scheduler.schedule(timer) { _ in }
+        scheduler.schedule(other) { _ in }
+        scheduler.endRecovery()
+        scheduler.cancel(timer.id)
+        var replied = false
+        XCTAssertTrue(scheduler.prepareForTermination { replied = true })
+        XCTAssertNotNil(center.requests[old.identifier])
+        XCTAssertFalse(replied)
+        center.finishPending()
+        flush()
+        XCTAssertNil(center.requests[old.identifier])
+        XCTAssertNotNil(center.requests[unrelated.identifier])
+        XCTAssertTrue(replied)
+    }
+
+    func testQuitWithoutCancellationDoesNotWaitForRecovery() throws {
+        let center = FakeNotificationCenter()
+        let scheduler = TimerNotifications(center: center)
+        scheduler.beginRecovery()
+        scheduler.schedule(try running()) { _ in }
+        scheduler.endRecovery()
+        XCTAssertFalse(scheduler.prepareForTermination { XCTFail("should not defer") })
+    }
+
+    func testStopResumeDuringRecoveryWaitsForReplacementBeforeQuit() throws {
+        var timer = try running()
+        let old = oldRequest(timer)
+        let center = FakeNotificationCenter()
+        center.requests[old.identifier] = old
+        let scheduler = TimerNotifications(center: center)
+        scheduler.beginRecovery()
+        scheduler.schedule(timer) { _ in }
+        scheduler.endRecovery()
+        scheduler.cancel(timer.id)
+        timer.pause(at: Date())
+        timer.resume(at: Date())
+        scheduler.schedule(timer) { _ in }
+        var replied = false
+        XCTAssertTrue(scheduler.prepareForTermination { replied = true })
+        center.finishPending()
+        flush()
+        XCTAssertFalse(replied)
+        let replacement = try XCTUnwrap(center.added)
+        XCTAssertNotEqual(replacement.identifier, old.identifier)
+        center.finishAdd()
+        flush()
+        XCTAssertTrue(replied)
+        XCTAssertNil(center.requests[old.identifier])
+        XCTAssertNotNil(center.requests[replacement.identifier])
+    }
+
+    func testLegacyReplacementAlreadyCommittedBeforeQuitDoesNotDuplicate() throws {
+        let timer = try running()
+        let center = FakeNotificationCenter()
+        center.commitsAtAdd = true
+        let old = oldRequest(timer)
+        center.requests[old.identifier] = old
+        let scheduler = TimerNotifications(center: center)
+        scheduler.beginRecovery()
+        scheduler.schedule(timer) { _ in }
+        scheduler.endRecovery()
+        center.finishPending()
+        flush()
+        XCTAssertEqual(center.added?.identifier, old.identifier)
+        XCTAssertEqual(center.requests.count, 1)
+        XCTAssertFalse(scheduler.prepareForTermination { XCTFail("should not defer") })
+        XCTAssertEqual(center.requests.count, 1)
+    }
+
+    func testQuitWaitsForCanceledAddCallbackAndRemovesLateCommit() throws {
+        let timer = try running()
+        let center = FakeNotificationCenter()
+        let scheduler = TimerNotifications(center: center)
+        scheduler.schedule(timer) { _ in }
+        flush()
+        scheduler.cancel(timer.id)
+        var replied = false
+        XCTAssertTrue(scheduler.prepareForTermination { replied = true })
+        center.finishAdd()
+        flush()
+        XCTAssertTrue(replied)
+        XCTAssertNil(center.requests[try XCTUnwrap(center.added?.identifier)])
+    }
+
     func testRecoveryAdoptsMatchingRequestAndKeepsItWithoutAuthorization() throws {
         let timer = try running()
         let center = FakeNotificationCenter()

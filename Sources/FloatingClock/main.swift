@@ -83,6 +83,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard timerCoordinator?.prepareForTermination({ sender.reply(toApplicationShouldTerminate: true) }) == true else {
+            return .terminateNow
+        }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         panel?.constrainAndSavePosition()
         NotificationCenter.default.removeObserver(self)
