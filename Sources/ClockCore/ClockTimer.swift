@@ -158,7 +158,10 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
     public init(id: UUID = UUID()) { self.id = id }
 
     public var isValid: Bool {
-        duration.isFinite && accumulated.isFinite && duration >= 0 && accumulated >= 0 &&
+        duration.isFinite && accumulated.isFinite && duration >= 0 &&
+        (accumulated >= 0 || (inputKind == .targetTime && mode == .countdown &&
+                              (state == .running || state == .paused))) &&
+        (duration - accumulated).isFinite &&
         (inputKind == .targetTime || duration <= TimerInputParser.maximumDuration) &&
         (state != .running || startedAt?.timeIntervalSince1970.isFinite == true) &&
         (continuousStart.map { $0.uptime.isFinite && $0.uptime >= 0 && !$0.bootID.isEmpty } ?? true)
@@ -171,7 +174,10 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
            instant.uptime >= start.uptime {
             return accumulated + instant.uptime - start.uptime
         }
-        return accumulated + max(0, date.timeIntervalSince(startedAt ?? date))
+        let delta = date.timeIntervalSince(startedAt ?? date)
+        // Absolute targets can be farther away than their original duration
+        // when the clock is set back before the start of the countdown.
+        return accumulated + (inputKind == .targetTime ? delta : max(0, delta))
     }
 
     public func seconds(at date: Date, instant: TimerInstant? = nil) -> TimeInterval {
@@ -223,6 +229,9 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
         guard state == .running else { return }
         finishIfNeeded(at: date, instant: instant)
         accumulated = elapsed(at: date, instant: instant)
+        // Once overtime has begun it stays overtime after a wall-clock rollback.
+        // Pausing freezes the displayed zero, so resuming counts from zero.
+        if inputKind == .targetTime && isOvertime { accumulated = max(duration, accumulated) }
         startedAt = nil
         continuousStart = nil
         state = .paused

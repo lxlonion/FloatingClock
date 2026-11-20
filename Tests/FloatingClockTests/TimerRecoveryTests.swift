@@ -70,6 +70,34 @@ final class TimerRecoveryTests: XCTestCase {
         XCTAssertEqual(coordinator.timers.map { $0.seconds(at: wall, instant: TimerInstant(uptime: 205, bootID: "B")) }, [35, 35])
     }
 
+    func testTargetRollbackPausePersistsAndResumesWithFullRemainingDeadline() throws {
+        let suite = "FloatingClock.targetRollback.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let formatter = ISO8601DateFormatter()
+        let start = try XCTUnwrap(formatter.date(from: "2030-01-01T12:00:00Z"))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        var timer = ClockTimer()
+        timer.inputKind = .targetTime
+        timer.input = "2030-01-01 12:06"
+        try timer.start(at: start, calendar: calendar)
+        ClockTimerStore(defaults: defaults).save([timer])
+        let scheduler = RecoveryNotifications()
+        var coordinator: TimerCoordinator? = TimerCoordinator(store: ClockTimerStore(defaults: defaults), notifications: scheduler)
+        coordinator!.restore(at: start.addingTimeInterval(-60))
+        XCTAssertEqual(coordinator!.timers[0].seconds(at: start.addingTimeInterval(-60)), 420)
+        coordinator!.primaryAction(timer.id, at: start.addingTimeInterval(-60))
+        coordinator = nil
+        let restarted = TimerCoordinator(store: ClockTimerStore(defaults: defaults), notifications: scheduler)
+        restarted.restore(at: start.addingTimeInterval(20))
+        XCTAssertEqual(restarted.timers[0].seconds(at: start.addingTimeInterval(20)), 420)
+        restarted.primaryAction(timer.id, at: start.addingTimeInterval(20))
+        XCTAssertEqual(scheduler.scheduledTimers.last?.deadline, start.addingTimeInterval(440))
+        XCTAssertEqual(scheduler.scheduledTimers.last?.input, "2030-01-01 12:06")
+        XCTAssertEqual(scheduler.scheduledTimers.last?.inputKind, .targetTime)
+    }
+
     func testCoordinatorRecoversValidRecordsAndPersistsChangesAcrossRestarts() throws {
         let suite = "FloatingClock.recovery.\(UUID())"
         let defaults = UserDefaults(suiteName: suite)!
