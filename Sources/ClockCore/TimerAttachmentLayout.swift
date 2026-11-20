@@ -15,6 +15,8 @@ public struct TimerAttachmentLayout {
             isAbove = false
             return
         }
+        // Keep the dial at its configured size; a short screen gives the tray a viewport.
+        let trayHeight = min(trayHeight, max(0, screen.height - clock.height - footerHeight))
         let below = clock.minY - screen.minY
         let above = screen.maxY - clock.maxY
         let belowHeight = trayHeight + footerHeight

@@ -16,6 +16,7 @@ final class TimerRowView: NSView {
     let deleteButton = TimerActionButton()
     let kindButton = TimerActionButton()
     let statusLabel = NSTextField(labelWithString: "")
+    let nextTargetButton = NSButton(title: "下一个该时刻", target: nil, action: nil)
     let resetButton = TimerActionButton()
     var onSign: (() -> Void)?
     var onPrimary: (() -> Void)?
@@ -30,6 +31,8 @@ final class TimerRowView: NSView {
     private var accentSign = true
     private var accentReadout = false
     private var hasError = false
+    private var statusBeforeNextButton: NSLayoutConstraint!
+    private var statusFullWidth: NSLayoutConstraint!
 
     init(timer: ClockTimer) {
         id = timer.id
@@ -75,6 +78,12 @@ final class TimerRowView: NSView {
         kindButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
         statusLabel.font = .systemFont(ofSize: 9)
         statusLabel.lineBreakMode = .byTruncatingTail
+        nextTargetButton.font = .systemFont(ofSize: 9)
+        nextTargetButton.isBordered = false
+        nextTargetButton.target = self
+        nextTargetButton.action = #selector(useNextTargetTime)
+        nextTargetButton.toolTip = "清除原日期，使用下一个该时刻（保留秒数）"
+        nextTargetButton.setAccessibilityLabel("使用下一个该时刻，清除原日期并保留秒数")
         let leftControls = NSStackView(views: [signButton, kindButton, resetButton])
         let rightControls = NSStackView(views: [primaryButton, deleteButton])
         for column in [leftControls, rightControls] {
@@ -85,14 +94,20 @@ final class TimerRowView: NSView {
         }
         let line = NSStackView(views: [leftControls, durationInput, targetInput, timeField, rightControls])
         line.orientation = .horizontal; line.alignment = .centerY; line.spacing = 4; line.distribution = .fill
-        for view in [line, statusLabel] { view.translatesAutoresizingMaskIntoConstraints = false; addSubview(view) }
+        for view in [line, statusLabel, nextTargetButton] { view.translatesAutoresizingMaskIntoConstraints = false; addSubview(view) }
+        statusBeforeNextButton = statusLabel.trailingAnchor.constraint(equalTo: nextTargetButton.leadingAnchor, constant: -2)
+        statusFullWidth = statusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10)
+        statusFullWidth.isActive = true
         NSLayoutConstraint.activate([
             line.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             line.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
             line.centerYAnchor.constraint(equalTo: centerYAnchor),
             line.heightAnchor.constraint(equalToConstant: 38),
             statusLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            statusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            nextTargetButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            nextTargetButton.centerYAnchor.constraint(equalTo: statusLabel.centerYAnchor, constant: -1),
+            nextTargetButton.widthAnchor.constraint(equalToConstant: 76),
+            nextTargetButton.heightAnchor.constraint(equalToConstant: 16),
             statusLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
             statusLabel.heightAnchor.constraint(equalToConstant: 10),
             leftControls.widthAnchor.constraint(equalToConstant: 20),
@@ -132,7 +147,7 @@ final class TimerRowView: NSView {
         signButton.isEnabled = timer.state != .running
         signButton.toolTip = "点击切换：＋ 倒计时，− 累计计时"
         signButton.setAccessibilityLabel(timer.countsDown ? "倒计时；点击切换为累计计时" : "累计计时；点击切换为倒计时")
-        let text = editing ? timer.input : settings.timerDisplayFormat.string(seconds: timer.seconds(at: now), countingDown: timer.countsDown)
+        let text = editing ? timer.input : settings.timerDisplayFormat.string(seconds: timer.seconds(at: now, instant: TimerInstant.current()), countingDown: timer.countsDown)
         if timeField.currentEditor() == nil && timeField.stringValue != text { timeField.stringValue = text }
         timeField.isEditable = false
         timeField.isSelectable = false
@@ -151,7 +166,16 @@ final class TimerRowView: NSView {
         kindButton.setAccessibilityLabel(kindButton.toolTip)
         resetButton.isHidden = editing || timer.state == .running
         var statusHelp: String?
-        if let error { statusLabel.stringValue = error }
+        let targetDetail = editing && timer.inputKind == .targetTime ? targetInput.targetDetail : nil
+        nextTargetButton.isHidden = !editing || timer.inputKind != .targetTime || !targetInput.hasExplicitTargetDate
+        if nextTargetButton.isHidden {
+            statusBeforeNextButton.isActive = false
+            statusFullWidth.isActive = true
+        } else {
+            statusFullWidth.isActive = false
+            statusBeforeNextButton.isActive = true
+        }
+        if let error { statusLabel.stringValue = targetDetail.map { "\($0) · \(error)" } ?? error }
         else {
             switch timer.state {
             case .idle:
@@ -160,6 +184,9 @@ final class TimerRowView: NSView {
                     statusHelp = "原时长：\(preserved)秒。旧时长超出输入范围；未修改时完整保留，修改小时或分钟将使用新时长。"
                 } else if editingDuration && durationInput.remainingSeconds > 0 {
                     statusLabel.stringValue = "另含 \(durationInput.remainingSeconds)秒"
+                } else if let targetDetail {
+                    statusLabel.stringValue = targetDetail
+                    statusHelp = "原定到点时间：\(targetDetail)"
                 } else { statusLabel.stringValue = "" }
             case .running: statusLabel.stringValue = timer.isOvertime ? "时间到了 · 正在累计超时" : (timer.mode == .elapsed ? "正在累计" : "倒计时中 · 到时通知")
             case .paused: statusLabel.stringValue = timer.isOvertime ? "超时已停止 · 可继续" : "已停止 · 可继续"
@@ -192,8 +219,14 @@ final class TimerRowView: NSView {
         kindButton.contentTintColor = ink.withAlphaComponent(0.65)
         resetButton.contentTintColor = ink.withAlphaComponent(0.65)
         deleteButton.contentTintColor = ink.withAlphaComponent(0.5)
+        nextTargetButton.contentTintColor = palette.accent
         statusLabel.textColor = hasError ? palette.error : (accentReadout ? palette.warning : ink.withAlphaComponent(0.55))
         needsDisplay = true
+    }
+
+    @objc private func useNextTargetTime() {
+        guard window?.makeFirstResponder(nil) != false else { return }
+        targetInput.useNextTargetTime()
     }
 
     @objc private func toggleSign() { window?.makeFirstResponder(nil); onSign?() }
@@ -219,7 +252,10 @@ final class TimerRowView: NSView {
 
 final class TimerTrayView: NSView {
     private static let rowSpacing: CGFloat = CardGeometry.inset
-    private let notice = NSTextField(labelWithString: "")
+    let notice = NSTextField(labelWithString: "")
+    let scrollView = NSScrollView()
+    private let document = NSView()
+    private var wasOverflowing = false
     private var selectedAppearance: ClockAppearance = .light
     private(set) var rows: [TimerRowView] = []
     var coordinator: TimerCoordinator?
@@ -232,7 +268,15 @@ final class TimerTrayView: NSView {
         super.init(frame: frameRect)
         notice.font = .systemFont(ofSize: 10)
         notice.lineBreakMode = .byTruncatingTail
-        addSubview(notice)
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.borderType = .noBorder
+        scrollView.setAccessibilityLabel("计时列表，可滚动")
+        scrollView.documentView = document
+        addSubview(scrollView)
+        document.addSubview(notice)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -254,7 +298,7 @@ final class TimerTrayView: NSView {
                 row.onReset = { [weak coordinator] in coordinator?.reset(id) }
                 row.onInput = { [weak coordinator] in coordinator?.editInput(id, text: $0) }
                 row.onKind = { [weak coordinator] in coordinator?.setInputKind(id, kind: $0) }
-                addSubview(row)
+                document.addSubview(row)
                 return row
             }
             let remaining = Set(rows.map(\.id))
@@ -284,12 +328,22 @@ final class TimerTrayView: NSView {
 
     override func layout() {
         super.layout()
-        var top = bounds.height - CardGeometry.inset
+        scrollView.frame = bounds
+        let viewport = scrollView.contentView.bounds
+        let height = max(viewport.height, contentHeight)
+        document.frame = CGRect(x: 0, y: 0, width: viewport.width, height: height)
+        let overflowing = contentHeight > viewport.height + 0.5
+        if overflowing && !wasOverflowing {
+            scrollView.contentView.scroll(to: CGPoint(x: 0, y: height - viewport.height))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+        wasOverflowing = overflowing
+        var top = height - CardGeometry.inset
         for row in rows {
             row.frame = CGRect(x: CardGeometry.inset, y: top - row.preferredHeight,
-                               width: bounds.width - 2 * CardGeometry.inset, height: row.preferredHeight)
+                               width: document.bounds.width - 2 * CardGeometry.inset, height: row.preferredHeight)
             top = row.frame.minY - Self.rowSpacing
         }
-        notice.frame = CGRect(x: 10, y: 8, width: bounds.width - 20, height: 18)
+        notice.frame = CGRect(x: 10, y: 8, width: document.bounds.width - 20, height: 18)
     }
 }
