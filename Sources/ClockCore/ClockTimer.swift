@@ -241,6 +241,19 @@ public final class ClockTimerStore {
         return Array(uniqueTimers.prefix(3))
     }
 
+    // Only opaque timer, occurrence, and request identifiers are stored here.
+    // Keeping the index in the same defaults domain isolates alternate stores.
+    public func loadNotificationRequestIndex() -> [String: [String: [String]]] {
+        defaults.dictionary(forKey: "FloatingClock.notificationRequestIndex.v1") as? [String: [String: [String]]] ?? [:]
+    }
+
+    public func saveNotificationRequestIndex(_ index: [String: [String: [String]]]) {
+        let key = "FloatingClock.notificationRequestIndex.v1"
+        if index.isEmpty { defaults.removeObject(forKey: key) } else { defaults.set(index, forKey: key) }
+        // Cancellation may be followed by a force quit in another process.
+        defaults.synchronize()
+    }
+
     public func save(_ timers: [ClockTimer]) {
         if usesRecoverySnapshot == nil { _ = load() }
         guard let data = try? JSONEncoder().encode(Array(timers.prefix(3))) else { return }

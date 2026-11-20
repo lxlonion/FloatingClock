@@ -4,6 +4,8 @@ import Darwin
 import UserNotifications
 
 protocol TimerNotificationScheduling: AnyObject {
+    func configure(store: ClockTimerStore, timers: [ClockTimer])
+    func track(_ timer: ClockTimer)
     func beginRecovery()
     func schedule(_ timer: ClockTimer, completion: @escaping (String?) -> Void)
     func cancel(_ id: UUID)
@@ -13,6 +15,8 @@ protocol TimerNotificationScheduling: AnyObject {
 }
 
 extension TimerNotificationScheduling {
+    func configure(store: ClockTimerStore, timers: [ClockTimer]) {}
+    func track(_ timer: ClockTimer) {}
     func beginRecovery() {}
     func endRecovery() {}
     func preserveDueNotification(_ id: UUID) {}
@@ -60,6 +64,8 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
     private var known: [UUID: Set<String>] = [:]
     private var inFlight: [UUID: Set<String>] = [:]
     private var occurrenceIDs: [UUID: UUID] = [:]
+    private var indexStore: ClockTimerStore?
+    private var requestIndex: [String: [String: [String]]] = [:]
     private var pendingSubmissions: [UUID: UUID] = [:]
     private var drainTimerIDs: Set<UUID> = []
     private var canceledInFlight: Set<String> = []
@@ -94,6 +100,63 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
         return Double(mach_continuous_time()) * Double(info.numer) / Double(info.denom) / 1_000_000_000
     }
 
+    func configure(store: ClockTimerStore, timers: [ClockTimer]) {
+        indexStore = store
+        let loaded = store.loadNotificationRequestIndex()
+        let active = Set(timers.map { $0.id.uuidString })
+        for (timerKey, occurrences) in loaded {
+            guard let id = UUID(uuidString: timerKey) else { continue }
+            for (occurrence, identifiers) in occurrences where UUID(uuidString: occurrence) != nil {
+                let valid = identifiers.filter { timerID($0) == id }
+                if active.contains(timerKey) {
+                    if !valid.isEmpty { requestIndex[timerKey, default: [:]][occurrence] = Array(Set(valid)) }
+                } else {
+                    center.removePending(valid)
+                }
+            }
+        }
+        if requestIndex != loaded { persistIndex() }
+        timers.forEach { track($0) }
+    }
+
+    func track(_ timer: ClockTimer) {
+        occurrenceIDs[timer.id] = timer.notificationOccurrenceID
+        guard let occurrences = requestIndex[timer.id.uuidString] else { return }
+        let current = timer.notificationOccurrenceID?.uuidString
+        let stale = Set(occurrences.filter { $0.key != current }.flatMap { $0.value })
+        if !stale.isEmpty {
+            center.removePending(Array(stale))
+            forget(stale, timerID: timer.id)
+        }
+    }
+
+    private func persistIndex() { indexStore?.saveNotificationRequestIndex(requestIndex) }
+
+    private func remember(_ identifiers: [String], timer: ClockTimer) {
+        guard indexStore != nil, let occurrence = timer.notificationOccurrenceID else { return }
+        let stableID = identifier(timer.id, generation: occurrence)
+        let extra = identifiers.filter { timerID($0) == timer.id && $0 != stableID }
+        guard !extra.isEmpty else { return }
+        let timerKey = timer.id.uuidString, occurrenceKey = occurrence.uuidString
+        let previous = Set(requestIndex[timerKey]?[occurrenceKey] ?? [])
+        let updated = previous.union(extra)
+        guard updated != previous else { return }
+        requestIndex[timerKey, default: [:]][occurrenceKey] = Array(updated)
+        persistIndex()
+    }
+
+    private func forget(_ identifiers: Set<String>, timerID id: UUID) {
+        guard var occurrences = requestIndex[id.uuidString] else { return }
+        for (occurrence, indexed) in occurrences {
+            let remaining = indexed.filter { !identifiers.contains($0) }
+            if remaining.isEmpty { occurrences.removeValue(forKey: occurrence) }
+            else { occurrences[occurrence] = remaining }
+        }
+        if occurrences.isEmpty { requestIndex.removeValue(forKey: id.uuidString) }
+        else { requestIndex[id.uuidString] = occurrences }
+        persistIndex()
+    }
+
     func beginRecovery() { recovering = true }
     func preserveDueNotification(_ id: UUID) { dueIDs.insert(id) }
 
@@ -103,6 +166,12 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
                 guard let self else { return }
                 for request in requests {
                     if let id = self.timerID(request.identifier) { self.known[id, default: []].insert(request.identifier) }
+                }
+                // Do not wait for the delivered query before canceling a pending
+                // request: it could fire while that unrelated callback is delayed.
+                for id in self.recoveryCancellations { self.removeKnown(id) }
+                for (id, schedule) in self.recoverySchedules where !self.recoveryCancellations.contains(id) {
+                    self.remember(Array(self.known[id] ?? []), timer: schedule.timer)
                 }
                 // Include delivered requests that disappeared before the pending snapshot.
                 self.center.delivered { [weak self] delivered in
@@ -116,6 +185,13 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
     }
 
     private func finishRecovery(requests: [UNNotificationRequest], delivered: [TimerDeliveredNotification]) {
+        let available = Set(requests.map(\.identifier) + delivered.map { $0.request.identifier })
+            .union(inFlight.values.flatMap { $0 })
+        for (timerKey, occurrences) in requestIndex {
+            guard let id = UUID(uuidString: timerKey) else { continue }
+            let missing = Set(occurrences.values.flatMap { $0 }).subtracting(available)
+            if !missing.isEmpty { forget(missing, timerID: id) }
+        }
         recovering = false
         let schedules = recoverySchedules
         let canceled = recoveryCancellations
@@ -138,6 +214,7 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
             if let match = candidates.first(where: { matches($0, timer: schedule.timer) }) {
                 let extras = (known[id] ?? []).subtracting([match.identifier])
                 center.removePending(Array(extras))
+                forget(extras, timerID: id)
                 known[id] = [match.identifier]
                 schedule.completion(nil)
             } else {
@@ -149,7 +226,7 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
 
     func schedule(_ timer: ClockTimer, completion: @escaping (String?) -> Void) {
         guard let deadline = timer.deadline else { return }
-        occurrenceIDs[timer.id] = timer.notificationOccurrenceID
+        track(timer)
         let schedule = Schedule(timer: timer, completion: completion, remaining: deadline.timeIntervalSince(now()),
                                 scheduledAt: continuousTime(), isRecovery: recovering && !recoveryCancellations.contains(timer.id))
         if recovering { recoverySchedules[timer.id] = schedule; return }
@@ -231,6 +308,8 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
             trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, delay), repeats: false)
         }
         let request = UNNotificationRequest(identifier: requestID, content: content, trigger: trigger)
+        // Persist an opaque non-derived ID before submitting it to the system.
+        remember([requestID], timer: timer)
         inFlight[timer.id, default: []].insert(requestID)
         center.add(request) { [weak self] error in
             DispatchQueue.main.async {
@@ -248,7 +327,9 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
                 if let error { self.complete(schedule, generation: generation, message: "通知安排失败：\(error.localizedDescription)"); return }
                 let old = self.known[timer.id] ?? []
                 self.known[timer.id] = [requestID]
-                self.center.removePending(Array(old.subtracting([requestID])))
+                let obsolete = old.subtracting([requestID])
+                self.center.removePending(Array(obsolete))
+                self.forget(obsolete, timerID: timer.id)
                 if schedule.isRecovery {
                     self.center.delivered { [weak self] delivered in
                         DispatchQueue.main.async {
@@ -279,8 +360,11 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
         canceledInFlight.formUnion(inFlight[id] ?? [])
         if let occurrence = occurrenceIDs.removeValue(forKey: id) {
             let stableID = identifier(id, generation: occurrence)
-            center.removePending([stableID])
-            center.removeDelivered([stableID])
+            let indexed = Set(requestIndex[id.uuidString]?[occurrence.uuidString] ?? [])
+            let identifiers = indexed.union([stableID])
+            center.removePending(Array(identifiers))
+            center.removeDelivered(Array(identifiers))
+            forget(indexed, timerID: id)
         }
         generations[id] = nil
         protectedRecoveryRequests[id] = nil
@@ -406,12 +490,14 @@ final class TimerCoordinator {
         self.store = store
         self.notifications = notifications
         timers = store.load()
+        notifications.configure(store: store, timers: timers)
     }
 
     func restore(at now: Date = Date()) {
         notifications.beginRecovery()
         for index in timers.indices {
             timers[index].prepareNotificationOccurrence()
+            notifications.track(timers[index])
             if timers[index].isOvertime || (timers[index].deadline.map { $0 <= now } ?? false) { notifications.preserveDueNotification(timers[index].id) }
             timers[index].finishIfNeeded(at: now)
             if timers[index].state == .running { schedule(timers[index]) }

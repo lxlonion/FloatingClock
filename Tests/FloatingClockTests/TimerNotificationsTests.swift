@@ -16,8 +16,11 @@ private final class FakeNotificationCenter: TimerNotificationCenter {
     var deliveredRequests: [String: UNNotificationRequest] = [:]
     var deliveredDate = Date()
     var afterDelivered: (() -> Void)?
+    var delayDelivered = false
+    var deliveredCallback: (([TimerDeliveredNotification]) -> Void)?
     func pending(_ completion: @escaping ([UNNotificationRequest]) -> Void) { pendingCallback = completion }
     func delivered(_ completion: @escaping ([TimerDeliveredNotification]) -> Void) {
+        if delayDelivered { deliveredCallback = completion; return }
         completion(deliveredIDs.map { id in
             let request = deliveredRequests[id] ?? requests[id] ?? UNNotificationRequest(identifier: id, content: UNMutableNotificationContent(), trigger: nil)
             return TimerDeliveredNotification(request: request, date: deliveredDate)
@@ -63,6 +66,104 @@ final class TimerNotificationsTests: XCTestCase {
         content.body = "10分00秒 的倒计时已结束。"
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: timer.deadline!.timeIntervalSinceNow + offset, repeats: false)
         return UNNotificationRequest(identifier: "FloatingClock.timer.\(timer.id.uuidString).\(UUID().uuidString)", content: content, trigger: trigger)
+    }
+
+    func testCanceledLegacyRequestIsRemovedBeforeDelayedDeliveredQuery() throws {
+        for deleting in [false, true] {
+            let suite = "FloatingClock.delivered-delay.\(UUID())"
+            let defaults = UserDefaults(suiteName: suite)!
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let timer = try running()
+            let store = ClockTimerStore(defaults: defaults)
+            store.save([timer])
+            let center = FakeNotificationCenter()
+            center.delayDelivered = true
+            let old = oldRequest(timer)
+            center.requests[old.identifier] = old
+            let scheduler = TimerNotifications(center: center)
+            let coordinator = TimerCoordinator(store: store, notifications: scheduler)
+            coordinator.restore()
+            if deleting { coordinator.remove(timer.id) } else { coordinator.primaryAction(timer.id) }
+            center.finishPending()
+            flush()
+            XCTAssertNotNil(center.deliveredCallback)
+            XCTAssertNil(center.requests[old.identifier], "must remove pending before delivered query completes; delete=\(deleting)")
+            center.deliveredCallback?([])
+            flush()
+        }
+    }
+
+    func testObservedRandomIdentifierPersistsAcrossRestartAndIsRemovedImmediately() throws {
+        let suite = "FloatingClock.index.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let timer = try running()
+        let store = ClockTimerStore(defaults: defaults)
+        store.load()
+        store.save([timer])
+        let center = FakeNotificationCenter()
+        let old = oldRequest(timer)
+        center.requests[old.identifier] = old
+        do {
+            let scheduler = TimerNotifications(center: center)
+            let coordinator = TimerCoordinator(store: ClockTimerStore(defaults: defaults), notifications: scheduler)
+            coordinator.restore()
+            center.finishPending()
+            flush()
+            XCTAssertNotNil(store.loadNotificationRequestIndex()[timer.id.uuidString]?[timer.notificationOccurrenceID!.uuidString])
+        }
+        do {
+            let scheduler = TimerNotifications(center: center)
+            let coordinator = TimerCoordinator(store: ClockTimerStore(defaults: defaults), notifications: scheduler)
+            coordinator.restore()
+            coordinator.primaryAction(timer.id)
+            XCTAssertNil(center.requests[old.identifier])
+            XCTAssertNil(store.loadNotificationRequestIndex()[timer.id.uuidString])
+        }
+    }
+
+    func testRequestIndexUsesOnlyTheCoordinatorsDefaultsDomain() throws {
+        let firstSuite = "FloatingClock.index-first.\(UUID())"
+        let secondSuite = "FloatingClock.index-second.\(UUID())"
+        let firstDefaults = UserDefaults(suiteName: firstSuite)!
+        let secondDefaults = UserDefaults(suiteName: secondSuite)!
+        defer {
+            firstDefaults.removePersistentDomain(forName: firstSuite)
+            secondDefaults.removePersistentDomain(forName: secondSuite)
+        }
+        let timer = try running()
+        let request = oldRequest(timer)
+        let first = ClockTimerStore(defaults: firstDefaults)
+        first.saveNotificationRequestIndex([timer.id.uuidString: [timer.notificationOccurrenceID!.uuidString: [request.identifier]]])
+        let center = FakeNotificationCenter()
+        center.requests[request.identifier] = request
+        let scheduler = TimerNotifications(center: center)
+        _ = TimerCoordinator(store: ClockTimerStore(defaults: secondDefaults), notifications: scheduler)
+        XCTAssertNotNil(center.requests[request.identifier])
+        XCTAssertFalse(first.loadNotificationRequestIndex().isEmpty)
+        XCTAssertTrue(ClockTimerStore(defaults: secondDefaults).loadNotificationRequestIndex().isEmpty)
+    }
+
+    func testIndexDoesNotRemoveOtherOccurrenceAndIsPruned() throws {
+        let suite = "FloatingClock.index-prune.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var timer = try running()
+        let old = oldRequest(timer)
+        let store = ClockTimerStore(defaults: defaults)
+        store.saveNotificationRequestIndex([timer.id.uuidString: [timer.notificationOccurrenceID!.uuidString: [old.identifier]]])
+        timer.pause(at: Date())
+        timer.resume(at: Date())
+        let current = oldRequest(timer)
+        let center = FakeNotificationCenter()
+        center.requests[old.identifier] = old
+        center.requests[current.identifier] = current
+        store.save([timer])
+        let scheduler = TimerNotifications(center: center)
+        _ = TimerCoordinator(store: store, notifications: scheduler)
+        XCTAssertNil(center.requests[old.identifier])
+        XCTAssertNotNil(center.requests[current.identifier])
+        XCTAssertTrue(store.loadNotificationRequestIndex().isEmpty)
     }
 
     func testCoordinatorRestoredCancellationRemovesInstalledOccurrenceBeforeSnapshot() throws {

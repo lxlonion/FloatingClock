@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import ClockCore
 import UserNotifications
 
@@ -46,12 +47,23 @@ if stage == "start" {
     coordinator.primaryAction(id)
     flush()
     precondition(center.read().count == 1)
-    if action.hasPrefix("legacy-") {
+    if action.hasPrefix("legacy-") || action.hasPrefix("observed-") {
         let current = center.read().keys.first!
         let prefix = current.split(separator: ".").dropLast().joined(separator: ".")
         center.write(["\(prefix).\(UUID().uuidString)": true])
     }
     defaults.synchronize()
+} else if stage == "observe" {
+    let scheduler = TimerNotifications(center: center)
+    let coordinator = TimerCoordinator(store: store, notifications: scheduler)
+    coordinator.restore()
+    center.finishPending()
+    flush()
+    precondition(!store.loadNotificationRequestIndex().isEmpty)
+    precondition(center.read().count == 1)
+} else if stage == "verify" {
+    precondition(center.read().isEmpty)
+    defaults.removePersistentDomain(forName: suite)
 } else {
     let scheduler = TimerNotifications(center: center)
     let coordinator = TimerCoordinator(store: store, notifications: scheduler)
@@ -59,6 +71,12 @@ if stage == "start" {
     coordinator.restore()
     if action.hasSuffix("pause") { coordinator.primaryAction(id) }
     if action.hasSuffix("delete") { coordinator.remove(id) }
+    if action.hasPrefix("observed-") {
+        // Simulate a force quit before the pending callback can run.
+        precondition(center.read().isEmpty)
+        fflush(nil)
+        _exit(0)
+    }
     if action == "keep" {
         precondition(!coordinator.prepareForTermination {})
         precondition(center.read().count == 1)
