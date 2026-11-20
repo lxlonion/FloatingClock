@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 public enum TimerDisplayFormat: String, Codable, CaseIterable {
     case totalMinutes, hoursMinutes
@@ -109,6 +110,37 @@ public enum TimerInputParser {
     }
 }
 
+// mach_continuous_time includes sleep. A boot-session identifier prevents an
+// uptime from a previous boot being mistaken for an anchor in this boot.
+public struct TimerInstant: Codable, Equatable {
+    public let uptime: TimeInterval
+    public let bootID: String
+
+    public init(uptime: TimeInterval, bootID: String) {
+        self.uptime = uptime
+        self.bootID = bootID
+    }
+
+    private static let bootID: String = {
+        var size: size_t = 0
+        guard sysctlbyname("kern.bootsessionuuid", nil, &size, nil, 0) == 0, size > 0 else {
+            return UUID().uuidString // Safe only within this process if unavailable.
+        }
+        var bytes = [CChar](repeating: 0, count: size)
+        guard sysctlbyname("kern.bootsessionuuid", &bytes, &size, nil, 0) == 0 else {
+            return UUID().uuidString
+        }
+        return String(cString: bytes)
+    }()
+
+    public static func current() -> TimerInstant {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        let seconds = Double(mach_continuous_time()) * Double(info.numer) / Double(info.denom) / 1_000_000_000
+        return TimerInstant(uptime: seconds, bootID: bootID)
+    }
+}
+
 public struct ClockTimer: Codable, Equatable, Identifiable {
     public let id: UUID
     public var mode: ClockTimerMode = .countdown
@@ -119,6 +151,7 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
     public private(set) var accumulated: TimeInterval = 0
     public private(set) var startedAt: Date?
     private var overtime: Bool?
+    private var continuousStart: TimerInstant?
     public var isOvertime: Bool { overtime == true }
     public var countsDown: Bool { mode == .countdown && !isOvertime }
 
@@ -127,18 +160,35 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
     public var isValid: Bool {
         duration.isFinite && accumulated.isFinite && duration >= 0 && accumulated >= 0 &&
         (inputKind == .targetTime || duration <= TimerInputParser.maximumDuration) &&
-        (state != .running || startedAt?.timeIntervalSince1970.isFinite == true)
+        (state != .running || startedAt?.timeIntervalSince1970.isFinite == true) &&
+        (continuousStart.map { $0.uptime.isFinite && $0.uptime >= 0 && !$0.bootID.isEmpty } ?? true)
     }
 
-    public func elapsed(at date: Date) -> TimeInterval {
-        accumulated + (state == .running ? max(0, date.timeIntervalSince(startedAt ?? date)) : 0)
-    }
-
-    public func seconds(at date: Date) -> TimeInterval {
-        if mode == .countdown {
-            return isOvertime ? max(0, elapsed(at: date) - duration) : max(0, duration - elapsed(at: date))
+    public func elapsed(at date: Date, instant: TimerInstant? = nil) -> TimeInterval {
+        guard state == .running else { return accumulated }
+        if inputKind == .duration, let start = continuousStart, let instant,
+           start.bootID == instant.bootID, start.uptime.isFinite, instant.uptime.isFinite,
+           instant.uptime >= start.uptime {
+            return accumulated + instant.uptime - start.uptime
         }
-        return elapsed(at: date)
+        return accumulated + max(0, date.timeIntervalSince(startedAt ?? date))
+    }
+
+    public func seconds(at date: Date, instant: TimerInstant? = nil) -> TimeInterval {
+        let elapsed = elapsed(at: date, instant: instant)
+        if mode == .countdown {
+            return isOvertime ? max(0, elapsed - duration) : max(0, duration - elapsed)
+        }
+        return elapsed
+    }
+
+    // Capture the elapsed value before changing anchors. On another boot (or for
+    // old archives) elapsed falls back to the saved wall-clock anchor, clamped at zero.
+    public mutating func reanchor(at date: Date, instant: TimerInstant?) {
+        guard state == .running, inputKind == .duration else { return }
+        accumulated = elapsed(at: date, instant: instant)
+        startedAt = date
+        continuousStart = instant
     }
 
     public var deadline: Date? {
@@ -146,7 +196,7 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
         return startedAt.addingTimeInterval(duration - accumulated)
     }
 
-    public mutating func start(at date: Date, calendar: Calendar = .current) throws {
+    public mutating func start(at date: Date, calendar: Calendar = .current, instant: TimerInstant? = nil) throws {
         var text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         var selectedMode = mode
         if text.hasPrefix("-") || text.hasPrefix("−") { selectedMode = .elapsed; text.removeFirst() }
@@ -164,26 +214,29 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
         duration = value
         accumulated = mode == .elapsed ? value : 0
         startedAt = date
+        continuousStart = inputKind == .duration ? instant : nil
         overtime = nil
         state = .running
     }
 
-    public mutating func pause(at date: Date) {
+    public mutating func pause(at date: Date, instant: TimerInstant? = nil) {
         guard state == .running else { return }
-        finishIfNeeded(at: date)
-        accumulated = elapsed(at: date)
+        finishIfNeeded(at: date, instant: instant)
+        accumulated = elapsed(at: date, instant: instant)
         startedAt = nil
+        continuousStart = nil
         state = .paused
     }
 
-    public mutating func resume(at date: Date) {
+    public mutating func resume(at date: Date, instant: TimerInstant? = nil) {
         guard state == .paused else { return }
         startedAt = date
+        continuousStart = inputKind == .duration ? instant : nil
         state = .running
     }
 
-    @discardableResult public mutating func finishIfNeeded(at date: Date) -> Bool {
-        guard state == .running, countsDown, seconds(at: date) <= 0 else { return false }
+    @discardableResult public mutating func finishIfNeeded(at date: Date, instant: TimerInstant? = nil) -> Bool {
+        guard state == .running, countsDown, seconds(at: date, instant: instant) <= 0 else { return false }
         overtime = true
         return true
     }
@@ -193,6 +246,7 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
         duration = 0
         accumulated = 0
         startedAt = nil
+        continuousStart = nil
         overtime = nil
     }
 }

@@ -4,6 +4,50 @@ import XCTest
 final class ClockTimerTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
+    func testContinuousDurationIgnoresClockChangesThroughSleepPauseAndOvertime() throws {
+        let start = TimerInstant(uptime: 100, bootID: "boot")
+        var timer = ClockTimer()
+        timer.input = "60秒"
+        try timer.start(at: now, instant: start)
+        let afterSleep = TimerInstant(uptime: 145, bootID: "boot")
+        XCTAssertEqual(timer.seconds(at: now.addingTimeInterval(3600), instant: afterSleep), 15)
+        XCTAssertEqual(timer.seconds(at: now.addingTimeInterval(-3600), instant: afterSleep), 15)
+        XCTAssertFalse(timer.finishIfNeeded(at: now.addingTimeInterval(3600), instant: afterSleep))
+        timer.pause(at: now.addingTimeInterval(-3600), instant: afterSleep)
+        XCTAssertEqual(timer.seconds(at: now), 15)
+        timer.resume(at: now.addingTimeInterval(500), instant: TimerInstant(uptime: 300, bootID: "boot"))
+        let later = TimerInstant(uptime: 325, bootID: "boot")
+        XCTAssertTrue(timer.finishIfNeeded(at: now.addingTimeInterval(-500), instant: later))
+        XCTAssertEqual(timer.seconds(at: now, instant: later), 10)
+    }
+
+    func testElapsedAndRecoveryUseSameBootOrWallFallback() throws {
+        var timer = ClockTimer()
+        timer.input = "-30秒"
+        try timer.start(at: now, instant: TimerInstant(uptime: 100, bootID: "A"))
+        timer = try JSONDecoder().decode(ClockTimer.self, from: JSONEncoder().encode(timer))
+        XCTAssertEqual(timer.seconds(at: now.addingTimeInterval(5000), instant: TimerInstant(uptime: 125, bootID: "A")), 55)
+        XCTAssertEqual(timer.seconds(at: now.addingTimeInterval(40), instant: TimerInstant(uptime: 10, bootID: "B")), 70)
+        XCTAssertEqual(timer.seconds(at: now.addingTimeInterval(-40), instant: TimerInstant(uptime: 10, bootID: "B")), 30)
+        timer.reanchor(at: now.addingTimeInterval(40), instant: TimerInstant(uptime: 10, bootID: "B"))
+        XCTAssertEqual(timer.seconds(at: now.addingTimeInterval(-100), instant: TimerInstant(uptime: 20, bootID: "B")), 80)
+        // Explicit-date callers retain their original deterministic semantics.
+        XCTAssertEqual(timer.seconds(at: now.addingTimeInterval(50)), 80)
+    }
+
+    func testTargetTimeUsesWallClockEvenWithContinuousInstant() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        var timer = ClockTimer()
+        timer.inputKind = .targetTime
+        timer.input = "2030-01-01 12:00"
+        try timer.start(at: now, calendar: calendar, instant: TimerInstant(uptime: 100, bootID: "A"))
+        let deadline = try XCTUnwrap(timer.deadline)
+        XCTAssertEqual(timer.seconds(at: deadline.addingTimeInterval(-12), instant: TimerInstant(uptime: 101, bootID: "A")), 12)
+        XCTAssertTrue(timer.finishIfNeeded(at: deadline.addingTimeInterval(10), instant: TimerInstant(uptime: 102, bootID: "A")))
+        XCTAssertEqual(timer.seconds(at: deadline.addingTimeInterval(10), instant: TimerInstant(uptime: 102, bootID: "A")), 10)
+    }
+
     func testDurationAcceptsLongMinutesMixedUnitsAndColonNotation() throws {
         for text in ["90", "90分钟", "1小时30min", "1h 30m", "90:00", "1:30:00", "1.5小时"] {
             XCTAssertEqual(try TimerInputParser.duration(text), 5400, text)
