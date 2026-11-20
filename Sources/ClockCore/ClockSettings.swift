@@ -54,26 +54,48 @@ public struct ClockSettings: Codable, Equatable {
         case selectedClockSlot, secondClockTimeZone, thirdClockTimeZone
     }
 
+    private enum TimeZoneKeys: String, CodingKey { case identifier, usesDaylightSavingTime }
+    private enum TransparencyKeys: String, CodingKey { case content, background }
+
     public init(from decoder: Decoder) throws {
         self.init()
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        transparency = try values.decodeIfPresent(Double.self, forKey: .transparency) ?? transparency
-        customTransparency = try? values.decode(CustomTransparency.self, forKey: .customTransparency)
-        faceSize = try values.decodeIfPresent(Double.self, forKey: .faceSize) ?? faceSize
-        appearance = try values.decodeIfPresent(ClockAppearance.self, forKey: .appearance) ?? appearance
-        let savedStyle = try values.decodeIfPresent(String.self, forKey: .style)
+        transparency = (try? values.decode(Double.self, forKey: .transparency)) ?? transparency
+        // Preserve either custom layer when the other is damaged, using the linked
+        // value for the missing layer. An entirely unreadable object stays linked.
+        if let layers = try? values.nestedContainer(keyedBy: TransparencyKeys.self, forKey: .customTransparency) {
+            let content = try? layers.decode(Double.self, forKey: .content)
+            let background = try? layers.decode(Double.self, forKey: .background)
+            if content != nil || background != nil {
+                customTransparency = CustomTransparency(content: content ?? linkedContentTransparency,
+                                                        background: background ?? overallTransparency)
+            }
+        }
+        faceSize = (try? values.decode(Double.self, forKey: .faceSize)) ?? faceSize
+        appearance = (try? values.decode(ClockAppearance.self, forKey: .appearance)) ?? appearance
+        let savedStyle = try? values.decode(String.self, forKey: .style)
         style = savedStyle.flatMap(ClockStyle.init(rawValue:)) ?? .minimal
-        showsMinuteNumerals = try values.decodeIfPresent(Bool.self, forKey: .showsMinuteNumerals) ?? (savedStyle == "style3")
-        minuteNumeralOpacity = try values.decodeIfPresent(Double.self, forKey: .minuteNumeralOpacity) ?? minuteNumeralOpacity
-        minuteNumeralSize = try values.decodeIfPresent(Double.self, forKey: .minuteNumeralSize) ?? minuteNumeralSize
-        isLocked = try values.decodeIfPresent(Bool.self, forKey: .isLocked) ?? isLocked
-        showsSeconds = try values.decodeIfPresent(Bool.self, forKey: .showsSeconds) ?? showsSeconds
-        showsDate = try values.decodeIfPresent(Bool.self, forKey: .showsDate) ?? showsDate
+        showsMinuteNumerals = (try? values.decode(Bool.self, forKey: .showsMinuteNumerals)) ?? (savedStyle == "style3")
+        minuteNumeralOpacity = (try? values.decode(Double.self, forKey: .minuteNumeralOpacity)) ?? minuteNumeralOpacity
+        minuteNumeralSize = (try? values.decode(Double.self, forKey: .minuteNumeralSize)) ?? minuteNumeralSize
+        isLocked = (try? values.decode(Bool.self, forKey: .isLocked)) ?? isLocked
+        showsSeconds = (try? values.decode(Bool.self, forKey: .showsSeconds)) ?? showsSeconds
+        showsDate = (try? values.decode(Bool.self, forKey: .showsDate)) ?? showsDate
         timerDisplayFormat = (try? values.decode(TimerDisplayFormat.self, forKey: .timerDisplayFormat)) ?? timerDisplayFormat
         selectedClockSlot = (try? values.decode(ClockSlot.self, forKey: .selectedClockSlot)) ?? selectedClockSlot
-        secondClockTimeZone = (try? values.decode(ClockTimeZoneSettings.self, forKey: .secondClockTimeZone)) ?? secondClockTimeZone
-        thirdClockTimeZone = (try? values.decode(ClockTimeZoneSettings.self, forKey: .thirdClockTimeZone)) ?? thirdClockTimeZone
-        origin = try values.decodeIfPresent(StoredPoint.self, forKey: .origin)
+        secondClockTimeZone = Self.decodeTimeZone(values, forKey: .secondClockTimeZone, fallback: secondClockTimeZone)
+        thirdClockTimeZone = Self.decodeTimeZone(values, forKey: .thirdClockTimeZone, fallback: thirdClockTimeZone)
+        // A position needs both coordinates; never invent half of a screen position.
+        origin = try? values.decode(StoredPoint.self, forKey: .origin)
+    }
+
+    private static func decodeTimeZone(_ values: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys,
+                                       fallback: ClockTimeZoneSettings) -> ClockTimeZoneSettings {
+        guard let zone = try? values.nestedContainer(keyedBy: TimeZoneKeys.self, forKey: key) else { return fallback }
+        return ClockTimeZoneSettings(
+            identifier: (try? zone.decode(String.self, forKey: .identifier)) ?? fallback.identifier,
+            usesDaylightSavingTime: (try? zone.decode(Bool.self, forKey: .usesDaylightSavingTime)) ?? fallback.usesDaylightSavingTime
+        )
     }
 
     public func title(for slot: ClockSlot) -> String {
