@@ -38,17 +38,26 @@ private final class SystemTimerNotificationCenter: TimerNotificationCenter {
 }
 
 final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNotificationCenterDelegate {
+    private struct Schedule {
+        let timer: ClockTimer
+        let completion: (String?) -> Void
+        let remaining: TimeInterval
+        let scheduledAt: TimeInterval
+        let isRecovery: Bool
+    }
+
     private let center: TimerNotificationCenter
     private let now: () -> Date
     private let continuousTime: () -> TimeInterval
     private var generations: [UUID: UUID] = [:]
     private var known: [UUID: Set<String>] = [:]
+    private var inFlight: [UUID: Set<String>] = [:]
     private var recovering = false
     private var dueIDs: Set<UUID> = []
-    private var inFlight: Set<String> = []
-    private var knownFireDates: [String: Date] = [:]
-    private var knownContinuousFireTimes: [String: TimeInterval] = [:]
-    private var recoveryOperations: [UUID: (ClockTimer?, ((String?) -> Void)?, (TimeInterval, TimeInterval)?)] = [:]
+    private var recoverySchedules: [UUID: Schedule] = [:]
+    private var recoveryCancellations: Set<UUID> = []
+    private let deadlineKey = "FloatingClock.deadline.v1"
+    private let kindKey = "FloatingClock.kind.v1"
 
     override convenience init() {
         let system = SystemTimerNotificationCenter()
@@ -71,7 +80,6 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
     }
 
     func beginRecovery() { recovering = true }
-
     func preserveDueNotification(_ id: UUID) { dueIDs.insert(id) }
 
     func endRecovery() {
@@ -79,159 +87,172 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
             DispatchQueue.main.async {
                 guard let self else { return }
                 for request in requests {
-                    if let id = self.timerID(request.identifier) {
-                        self.known[id, default: []].insert(request.identifier)
-                        let fire = (request.trigger as? UNTimeIntervalNotificationTrigger)?.nextTriggerDate() ??
-                            (request.trigger as? UNCalendarNotificationTrigger)?.nextTriggerDate()
-                        self.knownFireDates[request.identifier] = fire
-                        if request.trigger is UNTimeIntervalNotificationTrigger, let fire {
-                            self.knownContinuousFireTimes[request.identifier] = self.continuousTime() + fire.timeIntervalSince(self.now())
-                        }
+                    if let id = self.timerID(request.identifier) { self.known[id, default: []].insert(request.identifier) }
+                }
+                // Include delivered requests that disappeared before the pending snapshot.
+                self.center.delivered { [weak self] delivered in
+                    DispatchQueue.main.async {
+                        guard let self else { return }
+                        self.finishRecovery(requests: requests, delivered: delivered)
                     }
                 }
-                self.recovering = false
-                let operations = self.recoveryOperations
-                self.recoveryOperations.removeAll()
-                // Requests for timers that are no longer running are obsolete. Do not erase delivered alerts.
-                for id in Array(self.known.keys) where operations[id] == nil && !self.dueIDs.contains(id) {
-                    self.center.removePending(Array(self.known.removeValue(forKey: id) ?? []))
-                }
-                for (id, operation) in operations {
-                    guard let timer = operation.0, let completion = operation.1 else { self.cancel(id); continue }
-                    let candidates = requests.filter { self.known[id]?.contains($0.identifier) == true }
-                    let anchor = operation.2!
-                    let recoveryDeadline = timer.inputKind == .targetTime ? timer.deadline! :
-                        self.now().addingTimeInterval(anchor.0 - max(0, self.continuousTime() - anchor.1))
-                    if let match = candidates.first(where: {
-                        let fire = ($0.trigger as? UNTimeIntervalNotificationTrigger)?.nextTriggerDate() ??
-                            ($0.trigger as? UNCalendarNotificationTrigger)?.nextTriggerDate()
-                        guard let fire else { return false }
-                        return abs(fire.timeIntervalSince(recoveryDeadline)) < 1 && self.bodyMatches($0.content.body, timer: timer, deadline: recoveryDeadline)
-                    }) {
-                        let extras = (self.known[id] ?? []).subtracting([match.identifier])
-                        self.center.removePending(Array(extras))
-                        self.known[id] = [match.identifier]
-                        completion(nil)
-                    } else {
-                        self.schedulePrepared(timer, completion: completion, remaining: anchor.0, scheduledAt: anchor.1)
-                    }
-                }
+            }
+        }
+    }
+
+    private func finishRecovery(requests: [UNNotificationRequest], delivered: [String]) {
+        recovering = false
+        let schedules = recoverySchedules
+        let canceled = recoveryCancellations
+        recoverySchedules.removeAll()
+        recoveryCancellations.removeAll()
+        for id in canceled {
+            removeKnown(id)
+            center.removeDelivered(delivered.filter { timerID($0) == id })
+        }
+        for id in Array(known.keys) where schedules[id] == nil && !dueIDs.contains(id) {
+            center.removePending(Array(known.removeValue(forKey: id) ?? []))
+        }
+        for (id, schedule) in schedules {
+            if canceled.contains(id) {
+                submit(schedule)
+                continue
+            }
+            let candidates = requests.filter { known[id]?.contains($0.identifier) == true }
+            if let match = candidates.first(where: { matches($0, timer: schedule.timer) }) {
+                let extras = (known[id] ?? []).subtracting([match.identifier])
+                center.removePending(Array(extras))
+                known[id] = [match.identifier]
+                schedule.completion(nil)
+            } else {
+                submit(schedule)
             }
         }
     }
 
     func schedule(_ timer: ClockTimer, completion: @escaping (String?) -> Void) {
         guard let deadline = timer.deadline else { return }
-        let remaining = deadline.timeIntervalSince(now())
-        let scheduledAt = continuousTime()
-        if recovering { recoveryOperations[timer.id] = (timer, completion, (remaining, scheduledAt)); return }
-        schedulePrepared(timer, completion: completion, remaining: remaining, scheduledAt: scheduledAt)
+        let schedule = Schedule(timer: timer, completion: completion, remaining: deadline.timeIntervalSince(now()),
+                                scheduledAt: continuousTime(), isRecovery: recovering && !recoveryCancellations.contains(timer.id))
+        if recovering { recoverySchedules[timer.id] = schedule; return }
+        submit(schedule)
     }
 
-    private func schedulePrepared(_ timer: ClockTimer, completion: @escaping (String?) -> Void,
-                                  remaining: TimeInterval, scheduledAt: TimeInterval) {
+    private func submit(_ schedule: Schedule) {
+        let timer = schedule.timer
         guard let deadline = timer.deadline else { return }
         let generation = UUID()
-        // Replacing an existing identifier lets the system replace it atomically, including
-        // if the process exits before the add callback arrives.
-        let requestID = (known[timer.id] ?? []).first(where: { !inFlight.contains($0) }) ?? identifier(timer.id, generation: generation)
+        let busy = inFlight[timer.id] ?? []
+        let requestID = (known[timer.id] ?? []).first(where: { !busy.contains($0) }) ?? identifier(timer.id, generation: generation)
         generations[timer.id] = generation
         center.authorize { [weak self] granted, error in
             DispatchQueue.main.async {
                 guard let self, self.generations[timer.id] == generation else { return }
                 guard granted, error == nil else {
-                    completion("通知未开启，请在系统设置的「通知」中允许漂浮时钟。")
+                    schedule.completion("通知未开启，请在系统设置的「通知」中允许漂浮时钟。")
                     return
                 }
-                if self.oldHasFired(requestID) {
-                    completion(nil)
-                    return
-                }
-                let delay = timer.inputKind == .targetTime ? deadline.timeIntervalSince(self.now()) :
-                    remaining - max(0, self.continuousTime() - scheduledAt)
-                let content = UNMutableNotificationContent()
-                content.title = "时间到了"
-                content.body = self.body(for: timer, deadline: deadline)
-                content.sound = .default
-                let trigger: UNNotificationTrigger?
-                if delay <= 0 {
-                    // Authorization can finish after the deadline. With no old request to
-                    // deliver the alert, request immediate delivery instead of losing it.
-                    trigger = nil
-                } else if timer.inputKind == .targetTime {
-                    // Round up fractional seconds so a notification never fires early.
-                    let fire = Date(timeIntervalSince1970: ceil(deadline.timeIntervalSince1970))
-                    var calendar = Calendar.current
-                    calendar.timeZone = .current
-                    var components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: fire)
-                    components.calendar = calendar
-                    components.timeZone = calendar.timeZone
-                    trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
-                } else {
-                    trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, delay), repeats: false)
-                }
-                let request = UNNotificationRequest(identifier: requestID, content: content, trigger: trigger)
-                self.inFlight.insert(requestID)
-                self.center.add(request) { [weak self] error in
-                    DispatchQueue.main.async {
-                        guard let self else { return }
-                        self.inFlight.remove(requestID)
-                        guard self.generations[timer.id] == generation else {
-                            // A reused old identifier remains protected until its successor succeeds.
-                            if self.known[timer.id]?.contains(requestID) == true { return }
-                            self.center.removePending([requestID])
-                            self.center.removeDelivered([requestID])
-                            return
-                        }
-                        if let error { completion("通知安排失败：\(error.localizedDescription)"); return }
-                        let old = self.known[timer.id] ?? []
-                        if self.oldHasFired(requestID) {
-                            // A successful replacement may have beaten the old firing, or the old
-                            // notification may already be delivered. Only suppress a duplicate in
-                            // the latter case; blindly removing it here would lose the alert.
-                            self.center.delivered { [weak self] delivered in
-                                DispatchQueue.main.async {
-                                    guard let self, self.generations[timer.id] == generation else { return }
-                                    if delivered.contains(requestID) { self.center.removePending([requestID]) }
-                                }
+                if schedule.isRecovery {
+                    // Check again after authorization: an old alert can fire during either wait.
+                    self.center.delivered { [weak self] delivered in
+                        DispatchQueue.main.async {
+                            guard let self, self.generations[timer.id] == generation else { return }
+                            if delivered.contains(where: { self.timerID($0) == timer.id }) {
+                                self.center.removePending(Array(self.known[timer.id] ?? []))
+                                self.known[timer.id] = []
+                                schedule.completion(nil)
+                            } else {
+                                self.add(schedule, deadline: deadline, requestID: requestID, generation: generation)
                             }
                         }
-                        self.known[timer.id] = [requestID]
-                        self.knownFireDates[requestID] = deadline
-                        self.knownContinuousFireTimes[requestID] = timer.inputKind == .duration ? scheduledAt + remaining : nil
-                        self.center.removePending(Array(old.subtracting([requestID])))
-                        completion(nil)
+                    }
+                } else {
+                    self.add(schedule, deadline: deadline, requestID: requestID, generation: generation)
+                }
+            }
+        }
+    }
+
+    private func add(_ schedule: Schedule, deadline: Date, requestID: String, generation: UUID) {
+        let timer = schedule.timer
+        let delay = timer.inputKind == .targetTime ? deadline.timeIntervalSince(now()) :
+            schedule.remaining - max(0, continuousTime() - schedule.scheduledAt)
+        let content = UNMutableNotificationContent()
+        content.title = "时间到了"
+        content.body = body(for: timer, deadline: deadline)
+        content.sound = .default
+        // The deadline and kind describe the occurrence; interval nextTriggerDate is not
+        // its installation time and must never be used to infer this metadata.
+        content.userInfo = [deadlineKey: deadline.timeIntervalSince1970, kindKey: timer.inputKind.rawValue]
+        let trigger: UNNotificationTrigger?
+        if delay <= 0 {
+            trigger = nil
+        } else if timer.inputKind == .targetTime {
+            let fire = Date(timeIntervalSince1970: ceil(deadline.timeIntervalSince1970))
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+            var components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: fire)
+            components.calendar = calendar
+            components.timeZone = calendar.timeZone
+            trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+        } else {
+            trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, delay), repeats: false)
+        }
+        let request = UNNotificationRequest(identifier: requestID, content: content, trigger: trigger)
+        inFlight[timer.id, default: []].insert(requestID)
+        center.add(request) { [weak self] error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.inFlight[timer.id]?.remove(requestID)
+                guard self.generations[timer.id] == generation else {
+                    if self.known[timer.id]?.contains(requestID) == true { return }
+                    self.center.removePending([requestID])
+                    self.center.removeDelivered([requestID])
+                    return
+                }
+                if let error { schedule.completion("通知安排失败：\(error.localizedDescription)"); return }
+                let old = self.known[timer.id] ?? []
+                self.known[timer.id] = [requestID]
+                self.center.removePending(Array(old.subtracting([requestID])))
+                if schedule.isRecovery {
+                    self.center.delivered { [weak self] delivered in
+                        DispatchQueue.main.async {
+                            guard let self, self.generations[timer.id] == generation else { return }
+                            if delivered.contains(where: { self.timerID($0) == timer.id }) {
+                                self.center.removePending([requestID])
+                            }
+                        }
                     }
                 }
+                schedule.completion(nil)
             }
         }
     }
 
     func cancel(_ id: UUID) {
         generations[id] = nil
-        if recovering { dueIDs.remove(id); recoveryOperations[id] = (nil, nil, nil); return }
-        let identifiers = Array(known.removeValue(forKey: id) ?? [])
-        center.removePending(identifiers)
-        center.removeDelivered(identifiers)
-    }
-
-    private func oldHasFired(_ id: String) -> Bool {
-        if let fire = knownContinuousFireTimes[id] { return fire <= continuousTime() }
-        if let fire = knownFireDates[id] { return fire <= now() }
-        return false
-    }
-
-    private func bodyMatches(_ body: String, timer: ClockTimer, deadline: Date) -> Bool {
-        if body == self.body(for: timer, deadline: deadline) { return true }
-        guard timer.inputKind == .targetTime, body == "已到达设定时间 \(timer.input)。" else { return false }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = .current
-        for format in ["HH:mm", "HH:mm:ss", "yyyy-MM-dd HH:mm", "yyyy-MM-dd HH:mm:ss"] {
-            formatter.dateFormat = format
-            if formatter.string(from: deadline) == timer.input { return true }
+        dueIDs.remove(id)
+        if recovering {
+            recoveryCancellations.insert(id)
+            recoverySchedules[id] = nil
         }
-        return false
+        removeKnown(id)
+    }
+
+    private func removeKnown(_ id: UUID) {
+        let identifiers = (known.removeValue(forKey: id) ?? []).union(inFlight[id] ?? [])
+        center.removePending(Array(identifiers))
+        center.removeDelivered(Array(identifiers))
+    }
+
+    private func matches(_ request: UNNotificationRequest, timer: ClockTimer) -> Bool {
+        guard let deadline = timer.deadline,
+              let stored = request.content.userInfo[deadlineKey] as? Double,
+              abs(stored - deadline.timeIntervalSince1970) < 0.001,
+              request.content.userInfo[kindKey] as? String == timer.inputKind.rawValue,
+              request.content.body == body(for: timer, deadline: deadline) else { return false }
+        return timer.inputKind == .targetTime ? request.trigger is UNCalendarNotificationTrigger :
+            request.trigger is UNTimeIntervalNotificationTrigger
     }
 
     private func body(for timer: ClockTimer, deadline: Date) -> String {
@@ -282,7 +303,7 @@ final class TimerCoordinator {
     func restore(at now: Date = Date()) {
         notifications.beginRecovery()
         for index in timers.indices {
-            if let deadline = timers[index].deadline, deadline <= now { notifications.preserveDueNotification(timers[index].id) }
+            if timers[index].isOvertime || (timers[index].deadline.map { $0 <= now } ?? false) { notifications.preserveDueNotification(timers[index].id) }
             timers[index].finishIfNeeded(at: now)
             if timers[index].state == .running { schedule(timers[index]) }
         }

@@ -8,6 +8,7 @@ private final class FakeNotificationCenter: TimerNotificationCenter {
     var pendingCallback: (([UNNotificationRequest]) -> Void)?
     var addCallback: ((Error?) -> Void)?
     var added: UNNotificationRequest?
+    var commitsAtAdd = false
     var delayAuthorization = false
     var authorizationCallback: ((Bool, Error?) -> Void)?
     var removed: [String] = []
@@ -17,9 +18,13 @@ private final class FakeNotificationCenter: TimerNotificationCenter {
     func authorize(_ completion: @escaping (Bool, Error?) -> Void) {
         if delayAuthorization { authorizationCallback = completion } else { completion(true, nil) }
     }
-    func add(_ request: UNNotificationRequest, completion: @escaping (Error?) -> Void) { added = request; addCallback = completion }
+    func add(_ request: UNNotificationRequest, completion: @escaping (Error?) -> Void) {
+        added = request
+        if commitsAtAdd { requests[request.identifier] = request }
+        addCallback = completion
+    }
     func removePending(_ identifiers: [String]) { removed += identifiers; identifiers.forEach { requests[$0] = nil } }
-    func removeDelivered(_ identifiers: [String]) {}
+    func removeDelivered(_ identifiers: [String]) { deliveredIDs.removeAll { identifiers.contains($0) } }
     func finishPending() { pendingCallback?(Array(requests.values)); pendingCallback = nil }
     func finishAdd(_ error: Error? = nil) {
         if error == nil, let added { requests[added.identifier] = added }
@@ -30,9 +35,11 @@ private final class FakeNotificationCenter: TimerNotificationCenter {
 
 final class TimerNotificationsTests: XCTestCase {
     private func flush() {
-        let done = expectation(description: "main queue")
-        DispatchQueue.main.async { done.fulfill() }
-        wait(for: [done], timeout: 2)
+        for _ in 0..<5 {
+            let done = expectation(description: "main queue")
+            DispatchQueue.main.async { done.fulfill() }
+            wait(for: [done], timeout: 2)
+        }
     }
 
     private func running() throws -> ClockTimer {
@@ -52,7 +59,11 @@ final class TimerNotificationsTests: XCTestCase {
     func testRecoveryAdoptsMatchingRequestAndKeepsItWithoutAuthorization() throws {
         let timer = try running()
         let center = FakeNotificationCenter()
-        let old = oldRequest(timer)
+        let legacy = oldRequest(timer)
+        let content = UNMutableNotificationContent()
+        content.body = legacy.content.body
+        content.userInfo = ["FloatingClock.deadline.v1": timer.deadline!.timeIntervalSince1970, "FloatingClock.kind.v1": timer.inputKind.rawValue]
+        let old = UNNotificationRequest(identifier: legacy.identifier, content: content, trigger: legacy.trigger)
         center.requests[old.identifier] = old
         let scheduler = TimerNotifications(center: center)
         scheduler.beginRecovery()
@@ -240,6 +251,148 @@ final class TimerNotificationsTests: XCTestCase {
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
         XCTAssertTrue(center.added!.content.body.contains(formatter.string(from: timer.deadline!)))
         XCTAssertEqual(calendar.component(.hour, from: timer.deadline!), 0)
+    }
+
+    func testCancelRemovesAlreadyCommittedAddBeforeCallback() throws {
+        let timer = try running()
+        let center = FakeNotificationCenter()
+        center.commitsAtAdd = true
+        let scheduler = TimerNotifications(center: center)
+        scheduler.schedule(timer) { _ in }
+        flush()
+        let id = try XCTUnwrap(center.added?.identifier)
+        XCTAssertNotNil(center.requests[id])
+        scheduler.cancel(timer.id)
+        XCTAssertNil(center.requests[id])
+        center.finishAdd()
+        flush()
+        XCTAssertNil(center.requests[id])
+    }
+
+    func testLegacyIntervalWithoutMetadataIsReplacedEvenIfQueryLooksMatching() throws {
+        let timer = try running()
+        let center = FakeNotificationCenter()
+        let old = oldRequest(timer)
+        center.requests[old.identifier] = old
+        let scheduler = TimerNotifications(center: center)
+        scheduler.beginRecovery()
+        scheduler.schedule(timer) { _ in }
+        scheduler.endRecovery()
+        center.finishPending()
+        flush()
+        XCTAssertNotNil(center.added)
+        XCTAssertNotNil(center.requests[old.identifier])
+        XCTAssertEqual(center.added?.content.userInfo["FloatingClock.deadline.v1"] as? Double,
+                       timer.deadline!.timeIntervalSince1970)
+    }
+
+    func testRecoveryStopThenResumeCancelsOldRequestBeforeNewOne() throws {
+        var timer = try running()
+        let center = FakeNotificationCenter()
+        let old = oldRequest(timer)
+        center.requests[old.identifier] = old
+        let scheduler = TimerNotifications(center: center)
+        scheduler.beginRecovery()
+        scheduler.schedule(timer) { _ in }
+        scheduler.endRecovery()
+        scheduler.cancel(timer.id)
+        let paused = Date().addingTimeInterval(10)
+        timer.pause(at: paused)
+        timer.resume(at: paused.addingTimeInterval(120))
+        scheduler.schedule(timer) { _ in }
+        center.finishPending()
+        flush()
+        XCTAssertNil(center.requests[old.identifier])
+        let replacement = try XCTUnwrap(center.added)
+        XCTAssertNotEqual(replacement.identifier, old.identifier)
+        center.finishAdd()
+        flush()
+        XCTAssertNotNil(center.requests[replacement.identifier])
+    }
+
+    func testDeliveredOldRequestBeforeSnapshotOrDuringAuthorizationIsNotDuplicated() throws {
+        for beforeSnapshot in [false, true] {
+            var wall = Date()
+            var continuous: TimeInterval = 100
+            var timer = ClockTimer()
+            timer.input = "5s"
+            try timer.start(at: wall.addingTimeInterval(-4))
+            let center = FakeNotificationCenter()
+            center.delayAuthorization = true
+            let old = oldRequest(timer)
+            center.requests[old.identifier] = old
+            let scheduler = TimerNotifications(center: center, now: { wall }, continuousTime: { continuous })
+            scheduler.beginRecovery()
+            scheduler.schedule(timer) { _ in }
+            scheduler.endRecovery()
+            if beforeSnapshot {
+                center.requests[old.identifier] = nil
+                center.deliveredIDs = [old.identifier]
+            }
+            center.finishPending()
+            flush()
+            if !beforeSnapshot {
+                center.requests[old.identifier] = nil
+                center.deliveredIDs = [old.identifier]
+            }
+            wall = wall.addingTimeInterval(2)
+            continuous += 2
+            center.authorizationCallback?(true, nil)
+            flush()
+            XCTAssertNil(center.added)
+            XCTAssertTrue(center.deliveredIDs.contains(old.identifier))
+        }
+    }
+
+    func testCoordinatorPreservesPendingOvertimeForRunningAndPausedTimers() throws {
+        for paused in [false, true] {
+            let now = Date()
+            var timer = ClockTimer()
+            timer.input = "1s"
+            try timer.start(at: now.addingTimeInterval(-2))
+            if paused { timer.pause(at: now) } else { timer.finishIfNeeded(at: now) }
+            let suite = "FloatingClock.notification-overtime.\(UUID())"
+            let defaults = UserDefaults(suiteName: suite)!
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let store = ClockTimerStore(defaults: defaults)
+            store.save([timer])
+            let content = UNMutableNotificationContent()
+            let old = UNNotificationRequest(identifier: "FloatingClock.timer.\(timer.id.uuidString).\(UUID().uuidString)", content: content,
+                trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false))
+            let center = FakeNotificationCenter()
+            center.requests[old.identifier] = old
+            let scheduler = TimerNotifications(center: center, now: { now })
+            let coordinator = TimerCoordinator(store: store, notifications: scheduler)
+            coordinator.restore(at: now)
+            center.finishPending()
+            flush()
+            XCTAssertNotNil(center.requests[old.identifier])
+        }
+    }
+
+    func testSecondNewYorkFallbackHourUsesUnambiguousUTCComponents() throws {
+        let zone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        var local = Calendar(identifier: .gregorian)
+        local.timeZone = zone
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(secondsFromGMT: 0)!
+        let start = try XCTUnwrap(utc.date(from: DateComponents(year: 2027, month: 11, day: 7, hour: 4, minute: 30)))
+        var timer = ClockTimer()
+        timer.inputKind = .targetTime
+        timer.input = "01:30"
+        try timer.start(at: start, calendar: local)
+        timer.pause(at: start)
+        timer.resume(at: start.addingTimeInterval(3600))
+        XCTAssertEqual(timer.deadline, utc.date(from: DateComponents(year: 2027, month: 11, day: 7, hour: 6, minute: 30)))
+        let center = FakeNotificationCenter()
+        let scheduler = TimerNotifications(center: center, now: { start })
+        scheduler.schedule(timer) { _ in }
+        flush()
+        let trigger = try XCTUnwrap(center.added?.trigger as? UNCalendarNotificationTrigger)
+        XCTAssertEqual(trigger.dateComponents.timeZone?.secondsFromGMT(), 0)
+        XCTAssertEqual(trigger.dateComponents.hour, 6)
+        XCTAssertEqual(trigger.dateComponents.minute, 30)
+        XCTAssertEqual(trigger.nextTriggerDate(), timer.deadline)
     }
 
     func testTargetBodyUsesResumedDeadlineIncludingSecondsAndDate() throws {
