@@ -152,6 +152,9 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
     public private(set) var startedAt: Date?
     private var overtime: Bool?
     private var continuousStart: TimerInstant?
+    public private(set) var notificationOccurrenceID: UUID?
+    // Set only while upgrading an existing running archive with no occurrence ID.
+    public private(set) var legacyNotificationDeadline: Date?
     public var isOvertime: Bool { overtime == true }
     public var countsDown: Bool { mode == .countdown && !isOvertime }
 
@@ -223,6 +226,15 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
         continuousStart = inputKind == .duration ? instant : nil
         overtime = nil
         state = .running
+        notificationOccurrenceID = countsDown ? UUID() : nil
+        legacyNotificationDeadline = nil
+    }
+
+    // Upgrade an old archive once and persist the same identity across restarts.
+    public mutating func prepareNotificationOccurrence() {
+        guard notificationOccurrenceID == nil, let deadline else { return }
+        notificationOccurrenceID = UUID()
+        legacyNotificationDeadline = deadline
     }
 
     public mutating func pause(at date: Date, instant: TimerInstant? = nil) {
@@ -242,6 +254,10 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
         startedAt = date
         continuousStart = inputKind == .duration ? instant : nil
         state = .running
+        if countsDown {
+            notificationOccurrenceID = UUID()
+            legacyNotificationDeadline = nil
+        }
     }
 
     @discardableResult public mutating func finishIfNeeded(at date: Date, instant: TimerInstant? = nil) -> Bool {
@@ -257,6 +273,8 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
         startedAt = nil
         continuousStart = nil
         overtime = nil
+        notificationOccurrenceID = nil
+        legacyNotificationDeadline = nil
     }
 }
 
@@ -284,6 +302,19 @@ public final class ClockTimerStore {
         // Preserve a damaged recovery snapshot too, before a subsequent save replaces it.
         damagedSnapshot = snapshot != nil && damaged ? archive : nil
         return Array(uniqueTimers.prefix(3))
+    }
+
+    // Only opaque timer, occurrence, and request identifiers are stored here.
+    // Keeping the index in the same defaults domain isolates alternate stores.
+    public func loadNotificationRequestIndex() -> [String: [String: [String]]] {
+        defaults.dictionary(forKey: "FloatingClock.notificationRequestIndex.v1") as? [String: [String: [String]]] ?? [:]
+    }
+
+    public func saveNotificationRequestIndex(_ index: [String: [String: [String]]]) {
+        let key = "FloatingClock.notificationRequestIndex.v1"
+        if index.isEmpty { defaults.removeObject(forKey: key) } else { defaults.set(index, forKey: key) }
+        // Cancellation may be followed by a force quit in another process.
+        defaults.synchronize()
     }
 
     public func save(_ timers: [ClockTimer]) {
