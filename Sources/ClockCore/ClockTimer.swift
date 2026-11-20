@@ -200,15 +200,61 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
 public final class ClockTimerStore {
     private let defaults: UserDefaults
     private let key = "FloatingClock.timers.v1"
+    private let recoveryKey = "FloatingClock.timers.v1.recovered"
+    private var usesRecoverySnapshot: Bool?
+    private var damagedSnapshot: Any?
     public init(defaults: UserDefaults = .standard) { self.defaults = defaults }
 
     public func load() -> [ClockTimer] {
-        guard let data = defaults.data(forKey: key), let timers = try? JSONDecoder().decode([ClockTimer].self, from: data) else { return [] }
+        let snapshot = defaults.object(forKey: recoveryKey)
+        guard let archive = snapshot ?? defaults.object(forKey: key) else {
+            usesRecoverySnapshot = false
+            damagedSnapshot = nil
+            return []
+        }
+        let decoded = (archive as? Data).flatMap { try? JSONDecoder().decode(TimerArchive.self, from: $0) }
         var ids = Set<UUID>()
-        return Array(timers.filter { $0.isValid && ids.insert($0.id).inserted }.prefix(3))
+        let uniqueTimers = (decoded?.timers ?? []).filter { ids.insert($0.id).inserted }
+        let damaged = decoded == nil || decoded?.hasInvalidRecords == true ||
+            uniqueTimers.count != decoded?.timers.count || uniqueTimers.count > 3
+        usesRecoverySnapshot = snapshot != nil || damaged
+        // Preserve a damaged recovery snapshot too, before a subsequent save replaces it.
+        damagedSnapshot = snapshot != nil && damaged ? archive : nil
+        return Array(uniqueTimers.prefix(3))
     }
 
     public func save(_ timers: [ClockTimer]) {
-        if let data = try? JSONEncoder().encode(Array(timers.prefix(3))) { defaults.set(data, forKey: key) }
+        if usesRecoverySnapshot == nil { _ = load() }
+        guard let data = try? JSONEncoder().encode(Array(timers.prefix(3))) else { return }
+        if usesRecoverySnapshot == true {
+            if let damagedSnapshot {
+                defaults.set(damagedSnapshot, forKey: "\(recoveryKey).backup.\(UUID().uuidString)")
+                self.damagedSnapshot = nil
+            }
+            defaults.set(data, forKey: recoveryKey)
+        } else {
+            defaults.set(data, forKey: key)
+        }
+    }
+}
+
+private struct TimerArchive: Decodable {
+    let timers: [ClockTimer]
+    let hasInvalidRecords: Bool
+
+    init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        var timers: [ClockTimer] = []
+        var hasInvalidRecords = false
+        while !container.isAtEnd {
+            let record = try container.superDecoder()
+            if let timer = try? ClockTimer(from: record), timer.isValid {
+                timers.append(timer)
+            } else {
+                hasInvalidRecords = true
+            }
+        }
+        self.timers = timers
+        self.hasInvalidRecords = hasInvalidRecords
     }
 }

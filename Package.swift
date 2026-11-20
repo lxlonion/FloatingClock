@@ -8,6 +8,7 @@ let package = Package(
     targets: [
         .target(name: "ClockCore"),
         .executableTarget(name: "FloatingClock", dependencies: ["ClockCore"]),
-        .testTarget(name: "ClockCoreTests", dependencies: ["ClockCore"])
+        .testTarget(name: "ClockCoreTests", dependencies: ["ClockCore"]),
+        .testTarget(name: "FloatingClockTests", dependencies: ["FloatingClock", "ClockCore"])
     ]
 )
