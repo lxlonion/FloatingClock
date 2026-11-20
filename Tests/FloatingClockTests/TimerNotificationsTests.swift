@@ -13,8 +13,17 @@ private final class FakeNotificationCenter: TimerNotificationCenter {
     var authorizationCallback: ((Bool, Error?) -> Void)?
     var removed: [String] = []
     var deliveredIDs: [String] = []
+    var deliveredRequests: [String: UNNotificationRequest] = [:]
+    var deliveredDate = Date()
+    var afterDelivered: (() -> Void)?
     func pending(_ completion: @escaping ([UNNotificationRequest]) -> Void) { pendingCallback = completion }
-    func delivered(_ completion: @escaping ([String]) -> Void) { completion(deliveredIDs) }
+    func delivered(_ completion: @escaping ([TimerDeliveredNotification]) -> Void) {
+        completion(deliveredIDs.map { id in
+            let request = deliveredRequests[id] ?? requests[id] ?? UNNotificationRequest(identifier: id, content: UNMutableNotificationContent(), trigger: nil)
+            return TimerDeliveredNotification(request: request, date: deliveredDate)
+        })
+        afterDelivered?()
+    }
     func authorize(_ completion: @escaping (Bool, Error?) -> Void) {
         if delayAuthorization { authorizationCallback = completion } else { completion(true, nil) }
     }
@@ -62,7 +71,7 @@ final class TimerNotificationsTests: XCTestCase {
         let legacy = oldRequest(timer)
         let content = UNMutableNotificationContent()
         content.body = legacy.content.body
-        content.userInfo = ["FloatingClock.deadline.v1": timer.deadline!.timeIntervalSince1970, "FloatingClock.kind.v1": timer.inputKind.rawValue]
+        content.userInfo = ["FloatingClock.deadline.v1": timer.deadline!.timeIntervalSince1970, "FloatingClock.kind.v1": timer.inputKind.rawValue, "FloatingClock.occurrence.v1": timer.notificationOccurrenceID!.uuidString]
         let old = UNNotificationRequest(identifier: legacy.identifier, content: content, trigger: legacy.trigger)
         center.requests[old.identifier] = old
         let scheduler = TimerNotifications(center: center)
@@ -140,7 +149,12 @@ final class TimerNotificationsTests: XCTestCase {
             let passed = expectation(description: "old deadline passes")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { passed.fulfill() }
             wait(for: [passed], timeout: 3)
-            if oldWasDelivered { center.deliveredIDs = [old.identifier] }
+            if oldWasDelivered {
+                let deliveredContent = UNMutableNotificationContent()
+                deliveredContent.userInfo = ["FloatingClock.occurrence.v1": timer.notificationOccurrenceID!.uuidString]
+                center.deliveredRequests[old.identifier] = UNNotificationRequest(identifier: old.identifier, content: deliveredContent, trigger: old.trigger)
+                center.deliveredIDs = [old.identifier]
+            }
             center.finishAdd()
             flush(); flush()
             XCTAssertEqual(center.requests[old.identifier] != nil, !oldWasDelivered)
@@ -321,6 +335,9 @@ final class TimerNotificationsTests: XCTestCase {
             center.delayAuthorization = true
             let old = oldRequest(timer)
             center.requests[old.identifier] = old
+            let currentContent = UNMutableNotificationContent()
+            currentContent.userInfo = ["FloatingClock.occurrence.v1": timer.notificationOccurrenceID!.uuidString]
+            center.deliveredRequests[old.identifier] = UNNotificationRequest(identifier: old.identifier, content: currentContent, trigger: old.trigger)
             let scheduler = TimerNotifications(center: center, now: { wall }, continuousTime: { continuous })
             scheduler.beginRecovery()
             scheduler.schedule(timer) { _ in }
@@ -367,6 +384,182 @@ final class TimerNotificationsTests: XCTestCase {
             center.finishPending()
             flush()
             XCTAssertNotNil(center.requests[old.identifier])
+        }
+    }
+
+    func testOccurrencePersistsAndChangesForNewRunsButNotOvertime() throws {
+        let now = Date()
+        var timer = ClockTimer()
+        timer.input = "1"
+        try timer.start(at: now)
+        let initial = try XCTUnwrap(timer.notificationOccurrenceID)
+        timer = try JSONDecoder().decode(ClockTimer.self, from: JSONEncoder().encode(timer))
+        XCTAssertEqual(timer.notificationOccurrenceID, initial)
+        timer.pause(at: now.addingTimeInterval(10))
+        XCTAssertEqual(timer.notificationOccurrenceID, initial)
+        timer.resume(at: now.addingTimeInterval(20))
+        let resumed = try XCTUnwrap(timer.notificationOccurrenceID)
+        XCTAssertNotEqual(initial, resumed)
+        timer.finishIfNeeded(at: now.addingTimeInterval(120))
+        timer.pause(at: now.addingTimeInterval(121))
+        timer.resume(at: now.addingTimeInterval(122))
+        XCTAssertEqual(timer.notificationOccurrenceID, resumed)
+        timer.reset()
+        XCTAssertNil(timer.notificationOccurrenceID)
+        try timer.start(at: now)
+        XCTAssertNotEqual(timer.notificationOccurrenceID, resumed)
+    }
+
+    func testOldDeliveredOccurrenceDoesNotSuppressNewRunWithSameTargetDeadline() throws {
+        for legacy in [false, true] {
+        let now = Date()
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let start = calendar.startOfDay(for: now.addingTimeInterval(86400))
+        var timer = ClockTimer()
+        timer.inputKind = .targetTime
+        timer.input = "18:40"
+        try timer.start(at: start, calendar: calendar)
+        let oldOccurrence = try XCTUnwrap(timer.notificationOccurrenceID)
+        let deadline = try XCTUnwrap(timer.deadline)
+        timer.reset()
+        try timer.start(at: start, calendar: calendar)
+        XCTAssertEqual(timer.deadline, deadline)
+        XCTAssertNotEqual(timer.notificationOccurrenceID, oldOccurrence)
+        let center = FakeNotificationCenter()
+        center.delayAuthorization = true
+        let identifier = "FloatingClock.timer.\(timer.id.uuidString).\(UUID().uuidString)"
+        let oldContent = UNMutableNotificationContent()
+        // A legacy delivery can have the same timer, target time and body, but a
+        // newly started occurrence must not claim it.
+        oldContent.body = "已到达设定时间 18:40。"
+        if !legacy { oldContent.userInfo = ["FloatingClock.occurrence.v1": oldOccurrence.uuidString] }
+        center.deliveredDate = deadline
+        center.deliveredRequests[identifier] = UNNotificationRequest(identifier: identifier, content: oldContent, trigger: nil)
+        center.deliveredIDs = [identifier]
+        var wall = start
+        let scheduler = TimerNotifications(center: center, now: { wall })
+        scheduler.beginRecovery()
+        scheduler.schedule(timer) { _ in }
+        scheduler.endRecovery()
+        center.finishPending()
+        flush()
+        wall = deadline.addingTimeInterval(1)
+        center.authorizationCallback?(true, nil)
+        flush()
+        XCTAssertNotNil(center.added)
+        XCTAssertNil(center.added?.trigger)
+        }
+    }
+
+    func testSameOccurrencePendingSurvivesWallReanchorAndOldDelivered() throws {
+        let originalTimer = try running()
+        let original = oldRequest(originalTimer)
+        var record = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(originalTimer)) as? [String: Any])
+        record["startedAt"] = try XCTUnwrap(record["startedAt"] as? Double) + 3600
+        let timer = try JSONDecoder().decode(ClockTimer.self, from: JSONSerialization.data(withJSONObject: record))
+        XCTAssertEqual(timer.notificationOccurrenceID, originalTimer.notificationOccurrenceID)
+        let center = FakeNotificationCenter()
+        let content = UNMutableNotificationContent()
+        content.body = original.content.body
+        content.userInfo = ["FloatingClock.deadline.v1": timer.deadline!.addingTimeInterval(-3600).timeIntervalSince1970,
+                            "FloatingClock.kind.v1": "duration",
+                            "FloatingClock.occurrence.v1": timer.notificationOccurrenceID!.uuidString]
+        let current = UNNotificationRequest(identifier: original.identifier, content: content, trigger: original.trigger)
+        center.requests[current.identifier] = current
+        let oldID = "FloatingClock.timer.\(timer.id.uuidString).\(UUID().uuidString)"
+        let oldContent = UNMutableNotificationContent()
+        oldContent.userInfo = ["FloatingClock.occurrence.v1": UUID().uuidString]
+        center.deliveredRequests[oldID] = UNNotificationRequest(identifier: oldID, content: oldContent, trigger: nil)
+        center.deliveredIDs = [oldID]
+        let scheduler = TimerNotifications(center: center)
+        scheduler.beginRecovery()
+        scheduler.schedule(timer) { _ in }
+        scheduler.endRecovery()
+        center.finishPending()
+        flush()
+        XCTAssertNil(center.added)
+        XCTAssertNotNil(center.requests[current.identifier])
+    }
+
+    func testLegacyArchiveMigratesAndOnlyCredibleDueDeliverySuppresses() throws {
+        for credible in [false, true] {
+            let start = Date()
+            var timer = ClockTimer()
+            timer.input = "5s"
+            try timer.start(at: start)
+            var record = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(timer)) as? [String: Any])
+            record.removeValue(forKey: "notificationOccurrenceID")
+            record.removeValue(forKey: "legacyNotificationDeadline")
+            let suite = "FloatingClock.legacy-notification.\(UUID())"
+            let defaults = UserDefaults(suiteName: suite)!
+            defer { defaults.removePersistentDomain(forName: suite) }
+            defaults.set(try JSONSerialization.data(withJSONObject: [record]), forKey: "FloatingClock.timers.v1")
+            let center = FakeNotificationCenter()
+            center.delayAuthorization = true
+            let old = oldRequest(timer)
+            let content = UNMutableNotificationContent()
+            content.body = credible ? "00分05秒 的倒计时已结束。" : "old unrelated notification"
+            center.deliveredRequests[old.identifier] = UNNotificationRequest(identifier: old.identifier, content: content, trigger: old.trigger)
+            center.deliveredIDs = [old.identifier]
+            center.deliveredDate = timer.deadline!
+            var wall = start
+            var continuous: TimeInterval = 100
+            let scheduler = TimerNotifications(center: center, now: { wall }, continuousTime: { continuous })
+            let coordinator = TimerCoordinator(store: ClockTimerStore(defaults: defaults), notifications: scheduler)
+            coordinator.restore(at: start)
+            XCTAssertNotNil(coordinator.timers[0].notificationOccurrenceID)
+            XCTAssertEqual(coordinator.timers[0].legacyNotificationDeadline, timer.deadline)
+            center.finishPending()
+            flush()
+            wall = start.addingTimeInterval(6)
+            continuous += 6
+            center.authorizationCallback?(true, nil)
+            flush()
+            XCTAssertEqual(center.added == nil, credible)
+            let reloaded = ClockTimerStore(defaults: defaults).load()[0]
+            XCTAssertEqual(reloaded.notificationOccurrenceID, coordinator.timers[0].notificationOccurrenceID)
+        }
+    }
+
+    func testCrediblePendingFiresAfterDeliveredSnapshotWithoutImmediateDuplicate() throws {
+        for legacy in [false, true] {
+            var wall = Date()
+            var continuous: TimeInterval = 100
+            var timer = ClockTimer()
+            timer.input = "5s"
+            try timer.start(at: wall.addingTimeInterval(-4))
+            if legacy {
+                var record = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(timer)) as? [String: Any])
+                record.removeValue(forKey: "notificationOccurrenceID")
+                timer = try JSONDecoder().decode(ClockTimer.self, from: JSONSerialization.data(withJSONObject: record))
+                timer.prepareNotificationOccurrence()
+            }
+            let center = FakeNotificationCenter()
+            center.delayAuthorization = true
+            let old = oldRequest(timer)
+            let content = UNMutableNotificationContent()
+            content.body = legacy ? "00分05秒 的倒计时已结束。" : "needs replacement"
+            if !legacy { content.userInfo = ["FloatingClock.occurrence.v1": timer.notificationOccurrenceID!.uuidString] }
+            let current = UNNotificationRequest(identifier: old.identifier, content: content, trigger: old.trigger)
+            center.requests[current.identifier] = current
+            let scheduler = TimerNotifications(center: center, now: { wall }, continuousTime: { continuous })
+            scheduler.beginRecovery()
+            scheduler.schedule(timer) { _ in }
+            scheduler.endRecovery()
+            center.finishPending()
+            flush()
+            center.afterDelivered = {
+                center.afterDelivered = nil
+                wall = wall.addingTimeInterval(2)
+                continuous += 2
+                center.requests[current.identifier] = nil
+                center.deliveredRequests[current.identifier] = current
+                center.deliveredIDs = [current.identifier]
+            }
+            center.authorizationCallback?(true, nil)
+            flush()
+            XCTAssertNil(center.added)
         }
     }
 

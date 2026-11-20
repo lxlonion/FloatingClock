@@ -119,6 +119,9 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
     public private(set) var accumulated: TimeInterval = 0
     public private(set) var startedAt: Date?
     private var overtime: Bool?
+    public private(set) var notificationOccurrenceID: UUID?
+    // Set only while upgrading an existing running archive with no occurrence ID.
+    public private(set) var legacyNotificationDeadline: Date?
     public var isOvertime: Bool { overtime == true }
     public var countsDown: Bool { mode == .countdown && !isOvertime }
 
@@ -166,6 +169,15 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
         startedAt = date
         overtime = nil
         state = .running
+        notificationOccurrenceID = countsDown ? UUID() : nil
+        legacyNotificationDeadline = nil
+    }
+
+    // Upgrade an old archive once and persist the same identity across restarts.
+    public mutating func prepareNotificationOccurrence() {
+        guard notificationOccurrenceID == nil, let deadline else { return }
+        notificationOccurrenceID = UUID()
+        legacyNotificationDeadline = deadline
     }
 
     public mutating func pause(at date: Date) {
@@ -180,6 +192,10 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
         guard state == .paused else { return }
         startedAt = date
         state = .running
+        if countsDown {
+            notificationOccurrenceID = UUID()
+            legacyNotificationDeadline = nil
+        }
     }
 
     @discardableResult public mutating func finishIfNeeded(at date: Date) -> Bool {
@@ -194,6 +210,8 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
         accumulated = 0
         startedAt = nil
         overtime = nil
+        notificationOccurrenceID = nil
+        legacyNotificationDeadline = nil
     }
 }
 

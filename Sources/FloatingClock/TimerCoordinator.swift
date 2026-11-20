@@ -18,9 +18,14 @@ extension TimerNotificationScheduling {
 }
 
 // This boundary keeps the production scheduling path testable without requesting system permission.
+struct TimerDeliveredNotification {
+    let request: UNNotificationRequest
+    let date: Date
+}
+
 protocol TimerNotificationCenter: AnyObject {
     func pending(_ completion: @escaping ([UNNotificationRequest]) -> Void)
-    func delivered(_ completion: @escaping ([String]) -> Void)
+    func delivered(_ completion: @escaping ([TimerDeliveredNotification]) -> Void)
     func authorize(_ completion: @escaping (Bool, Error?) -> Void)
     func add(_ request: UNNotificationRequest, completion: @escaping (Error?) -> Void)
     func removePending(_ identifiers: [String])
@@ -30,7 +35,7 @@ protocol TimerNotificationCenter: AnyObject {
 private final class SystemTimerNotificationCenter: TimerNotificationCenter {
     let center = UNUserNotificationCenter.current()
     func pending(_ completion: @escaping ([UNNotificationRequest]) -> Void) { center.getPendingNotificationRequests(completionHandler: completion) }
-    func delivered(_ completion: @escaping ([String]) -> Void) { center.getDeliveredNotifications { completion($0.map { $0.request.identifier }) } }
+    func delivered(_ completion: @escaping ([TimerDeliveredNotification]) -> Void) { center.getDeliveredNotifications { completion($0.map { TimerDeliveredNotification(request: $0.request, date: $0.date) }) } }
     func authorize(_ completion: @escaping (Bool, Error?) -> Void) { center.requestAuthorization(options: [.alert, .sound], completionHandler: completion) }
     func add(_ request: UNNotificationRequest, completion: @escaping (Error?) -> Void) { center.add(request, withCompletionHandler: completion) }
     func removePending(_ identifiers: [String]) { center.removePendingNotificationRequests(withIdentifiers: identifiers) }
@@ -56,8 +61,10 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
     private var dueIDs: Set<UUID> = []
     private var recoverySchedules: [UUID: Schedule] = [:]
     private var recoveryCancellations: Set<UUID> = []
+    private var protectedRecoveryRequests: [UUID: Set<String>] = [:]
     private let deadlineKey = "FloatingClock.deadline.v1"
     private let kindKey = "FloatingClock.kind.v1"
+    private let occurrenceKey = "FloatingClock.occurrence.v1"
 
     override convenience init() {
         let system = SystemTimerNotificationCenter()
@@ -100,7 +107,7 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
         }
     }
 
-    private func finishRecovery(requests: [UNNotificationRequest], delivered: [String]) {
+    private func finishRecovery(requests: [UNNotificationRequest], delivered: [TimerDeliveredNotification]) {
         recovering = false
         let schedules = recoverySchedules
         let canceled = recoveryCancellations
@@ -108,7 +115,7 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
         recoveryCancellations.removeAll()
         for id in canceled {
             removeKnown(id)
-            center.removeDelivered(delivered.filter { timerID($0) == id })
+            center.removeDelivered(delivered.map { $0.request.identifier }.filter { timerID($0) == id })
         }
         for id in Array(known.keys) where schedules[id] == nil && !dueIDs.contains(id) {
             center.removePending(Array(known.removeValue(forKey: id) ?? []))
@@ -119,6 +126,7 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
                 continue
             }
             let candidates = requests.filter { known[id]?.contains($0.identifier) == true }
+            protectedRecoveryRequests[id] = Set(candidates.filter { isCrediblePending($0, timer: schedule.timer) }.map(\.identifier))
             if let match = candidates.first(where: { matches($0, timer: schedule.timer) }) {
                 let extras = (known[id] ?? []).subtracting([match.identifier])
                 center.removePending(Array(extras))
@@ -157,7 +165,7 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
                     self.center.delivered { [weak self] delivered in
                         DispatchQueue.main.async {
                             guard let self, self.generations[timer.id] == generation else { return }
-                            if delivered.contains(where: { self.timerID($0) == timer.id }) {
+                            if delivered.contains(where: { self.matchesDelivered($0, timer: timer) }) {
                                 self.center.removePending(Array(self.known[timer.id] ?? []))
                                 self.known[timer.id] = []
                                 schedule.completion(nil)
@@ -177,13 +185,21 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
         let timer = schedule.timer
         let delay = timer.inputKind == .targetTime ? deadline.timeIntervalSince(now()) :
             schedule.remaining - max(0, continuousTime() - schedule.scheduledAt)
+        if delay <= 0, schedule.isRecovery, !(protectedRecoveryRequests[timer.id] ?? []).isEmpty {
+            // A credible pending request can fire after the delivered snapshot. Do not
+            // issue an immediate duplicate while the system processes that request.
+            schedule.completion(nil)
+            return
+        }
         let content = UNMutableNotificationContent()
         content.title = "时间到了"
         content.body = body(for: timer, deadline: deadline)
         content.sound = .default
         // The deadline and kind describe the occurrence; interval nextTriggerDate is not
         // its installation time and must never be used to infer this metadata.
-        content.userInfo = [deadlineKey: deadline.timeIntervalSince1970, kindKey: timer.inputKind.rawValue]
+        var metadata: [String: Any] = [deadlineKey: deadline.timeIntervalSince1970, kindKey: timer.inputKind.rawValue]
+        if let occurrence = timer.notificationOccurrenceID { metadata[occurrenceKey] = occurrence.uuidString }
+        content.userInfo = metadata
         let trigger: UNNotificationTrigger?
         if delay <= 0 {
             trigger = nil
@@ -218,7 +234,7 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
                     self.center.delivered { [weak self] delivered in
                         DispatchQueue.main.async {
                             guard let self, self.generations[timer.id] == generation else { return }
-                            if delivered.contains(where: { self.timerID($0) == timer.id }) {
+                            if delivered.contains(where: { self.matchesDelivered($0, timer: timer) }) {
                                 self.center.removePending([requestID])
                             }
                         }
@@ -231,6 +247,7 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
 
     func cancel(_ id: UUID) {
         generations[id] = nil
+        protectedRecoveryRequests[id] = nil
         dueIDs.remove(id)
         if recovering {
             recoveryCancellations.insert(id)
@@ -246,13 +263,49 @@ final class TimerNotifications: NSObject, TimerNotificationScheduling, UNUserNot
     }
 
     private func matches(_ request: UNNotificationRequest, timer: ClockTimer) -> Bool {
-        guard let deadline = timer.deadline,
-              let stored = request.content.userInfo[deadlineKey] as? Double,
-              abs(stored - deadline.timeIntervalSince1970) < 0.001,
+        guard let deadline = timer.deadline, let occurrence = timer.notificationOccurrenceID,
+              request.content.userInfo[occurrenceKey] as? String == occurrence.uuidString,
               request.content.userInfo[kindKey] as? String == timer.inputKind.rawValue,
               request.content.body == body(for: timer, deadline: deadline) else { return false }
-        return timer.inputKind == .targetTime ? request.trigger is UNCalendarNotificationTrigger :
-            request.trigger is UNTimeIntervalNotificationTrigger
+        if timer.inputKind == .targetTime {
+            guard let stored = request.content.userInfo[deadlineKey] as? Double,
+                  abs(stored - deadline.timeIntervalSince1970) < 0.001 else { return false }
+            return request.trigger is UNCalendarNotificationTrigger
+        }
+        // Same occurrence survives a wall-clock reanchor; the interval itself is unchanged.
+        return request.trigger is UNTimeIntervalNotificationTrigger
+    }
+
+    private func isCrediblePending(_ request: UNNotificationRequest, timer: ClockTimer) -> Bool {
+        guard timerID(request.identifier) == timer.id else { return false }
+        if let occurrence = request.content.userInfo[occurrenceKey] as? String {
+            return occurrence == timer.notificationOccurrenceID?.uuidString
+        }
+        guard let deadline = timer.legacyNotificationDeadline else { return false }
+        let legacyBody = timer.inputKind == .targetTime ? "已到达设定时间 \(timer.input)。" :
+            "\(TimerDisplayFormat.hoursMinutes.string(seconds: timer.duration, countingDown: true)) 的倒计时已结束。"
+        guard request.content.body == legacyBody || request.content.body == body(for: timer, deadline: deadline) else { return false }
+        if let stored = request.content.userInfo[deadlineKey] as? Double,
+           abs(stored - deadline.timeIntervalSince1970) >= 0.001 { return false }
+        return true
+    }
+
+    private func matchesDelivered(_ delivered: TimerDeliveredNotification, timer: ClockTimer) -> Bool {
+        let request = delivered.request
+        guard timerID(request.identifier) == timer.id else { return false }
+        if let requestOccurrence = request.content.userInfo[occurrenceKey] as? String {
+            return requestOccurrence == timer.notificationOccurrenceID?.uuidString
+        }
+        // Legacy requests have no occurrence ID. Only a migrated legacy archive can
+        // claim one, and only after its expected deadline with corroborating content.
+        guard let deadline = timer.legacyNotificationDeadline, now() >= deadline,
+              abs(delivered.date.timeIntervalSince(deadline)) <= 5 else { return false }
+        let legacyBody = timer.inputKind == .targetTime ? "已到达设定时间 \(timer.input)。" :
+            "\(TimerDisplayFormat.hoursMinutes.string(seconds: timer.duration, countingDown: true)) 的倒计时已结束。"
+        guard request.content.body == legacyBody || request.content.body == body(for: timer, deadline: deadline) else { return false }
+        if let stored = request.content.userInfo[deadlineKey] as? Double,
+           abs(stored - deadline.timeIntervalSince1970) >= 0.001 { return false }
+        return true
     }
 
     private func body(for timer: ClockTimer, deadline: Date) -> String {
@@ -303,6 +356,7 @@ final class TimerCoordinator {
     func restore(at now: Date = Date()) {
         notifications.beginRecovery()
         for index in timers.indices {
+            timers[index].prepareNotificationOccurrence()
             if timers[index].isOvertime || (timers[index].deadline.map { $0 <= now } ?? false) { notifications.preserveDueNotification(timers[index].id) }
             timers[index].finishIfNeeded(at: now)
             if timers[index].state == .running { schedule(timers[index]) }
