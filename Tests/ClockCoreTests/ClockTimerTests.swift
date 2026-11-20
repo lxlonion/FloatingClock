@@ -260,6 +260,22 @@ final class ClockTimerTests: XCTestCase {
         }
     }
 
+    func testOversizedAttachmentUsesScreenHeightWithoutShrinkingDial() {
+        let screen = CGRect(x: 0, y: 0, width: 1280, height: 620)
+        let side: CGFloat = 444
+        for y in [5.0, 171.0] {
+            let dial = CGRect(x: 300, y: y, width: side, height: side)
+            let layout = TimerAttachmentLayout(clock: dial, trayHeight: 256, screen: screen)
+            XCTAssertTrue(screen.contains(layout.frame))
+            XCTAssertEqual(layout.dialFrame.size, dial.size)
+            XCTAssertEqual(layout.trayFrame.height, 176)
+            XCTAssertEqual(layout.isAbove, y < screen.midY - side / 2)
+            let drag = TimerAttachmentLayout(clock: dial, trayHeight: 256, screen: screen, constrainToScreen: false)
+            XCTAssertEqual(drag.dialFrame.offsetBy(dx: drag.frame.minX, dy: drag.frame.minY), dial)
+            XCTAssertEqual(TimerAttachmentLayout(clock: dial, trayHeight: 0, screen: screen).frame, dial)
+        }
+    }
+
     func testDraggingKeepsTheDialAnchoredAcrossEdgesAndOversizedAttachments() {
         let screen = CGRect(x: -1920, y: 1080, width: 1920, height: 800)
         for side in [164.0, 384] {

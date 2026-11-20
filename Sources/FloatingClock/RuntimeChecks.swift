@@ -592,7 +592,7 @@ enum RuntimeChecks {
             RunLoop.main.run(until: Date().addingTimeInterval(0.05))
             timerPanel.face.layoutSubtreeIfNeeded()
             let tray = timerPanel.timerTray
-            let attachedRows = tray.subviews.compactMap { $0 as? TimerRowView }
+            let attachedRows = tray.scrollView.documentView?.subviews.compactMap { $0 as? TimerRowView } ?? []
             check(timers.timers.count == 2 && tray.rows.count == 2 && attachedRows.count == 2 &&
                   Set(attachedRows.map(\.id)) == Set(timers.timers.map(\.id)) && !attachedRows.contains { $0.id == removed },
                   "deleting row \(deletedIndex + 1) while the last input is focused leaves exactly two attached rows")
@@ -762,6 +762,7 @@ enum RuntimeChecks {
         timerPanel.makeFirstResponder(nil)
         for id in [idleDuration, idleTarget, stoppedElapsed] { timers.remove(id) }
         checkTimerInputRegressions(check)
+        checkSmallScreenTimerViewport(check)
         checkTimerDragging(check)
         checkSizeHoverAndOpacity(check)
         checkVisualPolish(check)
@@ -1099,7 +1100,7 @@ enum RuntimeChecks {
             scheduler.message = "通知未开启"
             let start = Date()
             timers.primaryAction(id, at: start)
-            let notice = panel.timerTray.subviews.compactMap { $0 as? NSTextField }.first { $0.stringValue.contains("通知未就绪") }
+            let notice = panel.timerTray.notice.isHidden ? nil : panel.timerTray.notice
             check(notice != nil && sameColor(notice?.textColor, palette.warning),
                   "\(appearance.rawValue) notification warning uses warm amber")
             timers.tick(at: start.addingTimeInterval(2))
@@ -1410,6 +1411,116 @@ enum RuntimeChecks {
                   "switching input modes clears the preserved legacy duration \(text)")
             restored.remove(saved.id)
         }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        let future = formatter.string(from: Date().addingTimeInterval(86400))
+        var futureTimer = ClockTimer()
+        futureTimer.inputKind = .targetTime
+        futureTimer.input = future
+        store.save([futureTimer])
+        let futureRestored = TimerCoordinator(store: store, notifications: scheduler)
+        attach(futureRestored)
+        let futureRow = panel.timerTray.rows[0]
+        futureRow.primaryButton.performClick(nil)
+        check(futureRestored.timers[0].input == future && futureRestored.timers[0].deadline == formatter.date(from: future) &&
+              scheduler.scheduled.last?.deadline == formatter.date(from: future),
+              "starting an untouched future legacy target preserves the exact date and seconds in the deadline and notification")
+        futureRestored.remove(futureTimer.id)
+
+        for text in ["2001-01-02 12:34:56", "12:34:56"] {
+            var saved = ClockTimer()
+            saved.inputKind = .targetTime
+            saved.input = text
+            store.save([saved])
+            let restored = TimerCoordinator(store: store, notifications: scheduler)
+            attach(restored)
+            let legacy = panel.timerTray.rows[0]
+            settle()
+            check(legacy.statusLabel.stringValue == text && !legacy.statusLabel.isHidden,
+                  "legacy target \(text) visibly exposes date and seconds")
+            panel.makeFirstResponder(legacy.targetInput.minutes.field)
+            panel.makeFirstResponder(nil)
+            settle()
+            check(restored.timers[0].input == text && store.load().first?.input == text,
+                  "focusing legacy target \(text) preserves its precise stored value")
+            if text.contains(" ") {
+                legacy.primaryButton.performClick(nil)
+                check(restored.timers[0].state == .idle && restored.timers[0].input == text &&
+                      !legacy.nextTargetButton.isHidden && legacy.statusLabel.stringValue.contains(text),
+                      "past explicit target remains visible after start fails")
+                type("45", into: legacy.targetInput.minutes.field)
+                legacy.nextTargetButton.performClick(nil)
+                check(restored.timers[0].input == "12:45:56" && legacy.nextTargetButton.isHidden,
+                      "next-time control commits focused fields, removes the old date and retains seconds")
+                legacy.primaryButton.performClick(nil)
+                let expected = try? TimerInputParser.targetDate("12:45:56", now: Date())
+                check(restored.timers[0].state == .running && abs((restored.timers[0].deadline?.timeIntervalSince(expected ?? .distantPast) ?? 999)) < 2,
+                      "converted legacy target starts at the next matching time including seconds")
+                let reloaded = TimerCoordinator(store: store, notifications: scheduler)
+                check(reloaded.timers.first?.input == "12:45:56" && reloaded.timers.first?.state == .running,
+                      "converted target and running state survive restart")
+            }
+            restored.remove(saved.id)
+        }
+    }
+
+    private static func checkSmallScreenTimerViewport(_ check: (Bool, String) -> Void) {
+        let suite = "FloatingClock.small-screen.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let scheduler = CheckTimerNotifications()
+        scheduler.message = "通知未开启"
+        var settings = ClockSettings()
+        settings.faceSize = 420
+        let panel = ClockPanel(settings: settings)
+        let screen = CGRect(x: 0, y: 0, width: 1280, height: 620)
+        panel.layoutScreenFrameOverride = screen
+        let timers = TimerCoordinator(store: ClockTimerStore(defaults: defaults), notifications: scheduler)
+        panel.timerCoordinator = timers
+        timers.onChange = { [weak panel] in panel?.refreshTimers() }
+        panel.showClock()
+        defer { panel.hideClock() }
+        for _ in 0..<3 {
+            _ = timers.add()
+            panel.timerTray.rows.last?.primaryButton.performClick(nil)
+        }
+        panel.face.layoutSubtreeIfNeeded()
+        for above in [true, false] {
+            let side = settings.faceSize + ClockLayout.padding * 2
+            let dial = CGRect(x: 300, y: above ? 5 : screen.maxY - side - 5, width: side, height: side)
+            panel.face.onDragMoved?(dial)
+            let dragged = panel.clockScreenFrame
+            panel.layoutScreenFrameOverride = screen
+            panel.face.layoutSubtreeIfNeeded()
+            let tray = panel.timerTray
+            var controlsReachable = true
+            for row in tray.rows {
+                row.scrollToVisible(row.bounds)
+                tray.scrollView.reflectScrolledClipView(tray.scrollView.contentView)
+                for button in [row.primaryButton, row.deleteButton] {
+                    let inClip = button.convert(button.bounds, to: tray.scrollView.contentView)
+                    let onScreen = panel.convertToScreen(button.convert(button.bounds, to: panel.face))
+                    let center = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: panel.face)
+                    let hit = panel.face.hitTest(center)
+                    controlsReachable = controlsReachable && tray.scrollView.contentView.bounds.contains(inClip) && screen.contains(onScreen) &&
+                        (hit === button || (hit?.isDescendant(of: button) ?? false))
+                }
+            }
+            check(dragged == dial && screen.contains(panel.frame) && panel.clockScreenFrame.size == dial.size &&
+                  tray.rows.allSatisfy { $0.preferredHeight == 64 } && !tray.notice.isHidden &&
+                  tray.scrollView.documentView!.bounds.height > tray.scrollView.contentView.bounds.height && controlsReachable &&
+                  ((tray.frame.midY > panel.face.dialCard.midY) == above),
+                  "small screen \(above ? "above" : "below") keeps the full-size dial anchored during drag and scrolls all running controls into view")
+        }
+        let last = panel.timerTray.rows.last!
+        last.scrollToVisible(last.bounds)
+        last.primaryButton.performClick(nil)
+        let stopped = timers.timers.last?.state == .paused
+        last.deleteButton.performClick(nil)
+        check(stopped && timers.timers.count == 2 && settings.faceSize == 420,
+              "small screen scrolled stop and delete controls operate without changing the configured dial size")
     }
 
     static func renderPreview(to path: String) throws {

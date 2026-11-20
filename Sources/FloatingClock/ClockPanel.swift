@@ -19,6 +19,8 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
     private var footerHeight: CGFloat = 0
     var onPositionChanged: ((CGPoint) -> Void)?
     var onQuickMenuRequested: ((NSView) -> Void)?
+    // Allows the actual window layout path to be exercised against a simulated display.
+    var layoutScreenFrameOverride: CGRect? { didSet { layoutPanel(anchoredAt: clockScreenFrame) } }
     var mouseLocationProvider: () -> CGPoint = { NSEvent.mouseLocation }
 
     override var canBecomeKey: Bool { !settings.isLocked && !(timerCoordinator?.timers.isEmpty ?? true) }
@@ -189,7 +191,8 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
     }
 
     private func layoutScreenFrame(for dial: CGRect) -> CGRect {
-        NSScreen.screens.max { a, b in
+        if let layoutScreenFrameOverride { return layoutScreenFrameOverride }
+        return NSScreen.screens.max { a, b in
             let ia = a.visibleFrame.intersection(dial), ib = b.visibleFrame.intersection(dial)
             return (ia.isNull ? 0 : ia.width * ia.height) < (ib.isNull ? 0 : ib.width * ib.height)
         }?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
@@ -249,6 +252,7 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         makeKey()
         face.layoutSubtreeIfNeeded()
         if let row = timerTray.rows.first(where: { $0.id == id }) {
+            row.scrollToVisible(row.bounds)
             makeFirstResponder(row.durationInput.minutes.field)
             row.durationInput.minutes.field.selectText(nil)
         }

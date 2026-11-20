@@ -146,6 +146,12 @@ final class TimerTimeInput: NSStackView {
     private var targetDatePrefix = ""
     private var targetSecondsSuffix = ""
     private var updateRevision = 0
+    private var originalTarget: (text: String, hours: Int, minutes: Int)?
+    var hasExplicitTargetDate: Bool { !targetDatePrefix.isEmpty }
+    var targetDetail: String? {
+        guard kind == .targetTime, hasExplicitTargetDate || !targetSecondsSuffix.isEmpty else { return nil }
+        return targetDatePrefix + String(format: "%02d:%02d", hours.value, minutes.value) + targetSecondsSuffix
+    }
     private var originalDuration: (seconds: TimeInterval, hours: Int, minutes: Int)?
     var preservedDuration: TimeInterval? {
         guard let originalDuration, hours.value == originalDuration.hours,
@@ -193,6 +199,7 @@ final class TimerTimeInput: NSStackView {
                   (0...23).contains(hour), (0...59).contains(minute) else { return }
             targetDatePrefix = parts.count == 2 ? String(parts[0]) + " " : ""
             targetSecondsSuffix = time.count == 3 ? ":" + String(time[2]) : ""
+            originalTarget = (input, hour, minute)
             hours.update(value: hour)
             minutes.update(value: minute)
             return
@@ -218,7 +225,11 @@ final class TimerTimeInput: NSStackView {
         let input: String
         if kind == .targetTime {
             guard (0...23).contains(hours.value), (0...59).contains(minutes.value) else { return }
-            input = targetDatePrefix + String(format: "%02d:%02d", hours.value, minutes.value) + targetSecondsSuffix
+            if let originalTarget, originalTarget.hours == hours.value, originalTarget.minutes == minutes.value {
+                input = originalTarget.text
+            } else {
+                input = targetDatePrefix + String(format: "%02d:%02d", hours.value, minutes.value) + targetSecondsSuffix
+            }
         } else {
             let total = preservedDuration ?? min(TimerInputParser.maximumDuration, Double(hours.value) * 3600 + Double(minutes.value) * 60 + remainingSeconds)
             input = "\(total)秒"
@@ -229,6 +240,13 @@ final class TimerTimeInput: NSStackView {
             guard let self, self.updateRevision == revision else { return }
             self.update(input: input)
         }
+    }
+
+    func useNextTargetTime() {
+        guard kind == .targetTime, hasExplicitTargetDate else { return }
+        targetDatePrefix = ""
+        originalTarget = nil
+        commit()
     }
 
     private func hourTextChanged(_ text: String) {
