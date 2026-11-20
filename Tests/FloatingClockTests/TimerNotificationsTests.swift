@@ -99,7 +99,6 @@ final class TimerNotificationsTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         let timer = try running()
         let store = ClockTimerStore(defaults: defaults)
-        store.load()
         store.save([timer])
         let center = FakeNotificationCenter()
         let old = oldRequest(timer)
