@@ -763,6 +763,7 @@ enum RuntimeChecks {
         for id in [idleDuration, idleTarget, stoppedElapsed] { timers.remove(id) }
         checkTimerInputRegressions(check)
         checkSmallScreenTimerViewport(check)
+        checkVeryShortScreenTimerViewport(check)
         checkTimerDragging(check)
         checkSizeHoverAndOpacity(check)
         checkVisualPolish(check)
@@ -1429,6 +1430,40 @@ enum RuntimeChecks {
               "starting an untouched future legacy target preserves the exact date and seconds in the deadline and notification")
         futureRestored.remove(futureTimer.id)
 
+        for (raw, detail, converted) in [
+            ("2001-01-02 12:34\n", "2001-01-02 12:34", "12:34"),
+            ("\t2001-01-02 12:34:56\t", "2001-01-02 12:34:56", "12:34:56"),
+            ("\t12:34\n", "", ""),
+            (" 12:34:56 ", "12:34:56", "")
+        ] {
+            var saved = ClockTimer()
+            saved.inputKind = .targetTime
+            saved.input = raw
+            store.save([saved])
+            let restored = TimerCoordinator(store: store, notifications: scheduler)
+            attach(restored)
+            let legacy = panel.timerTray.rows[0]
+            settle()
+            let visible = legacy.targetInput.hours.value == 12 && legacy.targetInput.minutes.value == 34 &&
+                (detail.isEmpty || legacy.statusLabel.stringValue == detail)
+            panel.makeFirstResponder(legacy.targetInput.minutes.field)
+            panel.makeFirstResponder(nil)
+            settle()
+            let unchanged = restored.timers[0].input == raw && store.load().first?.input == raw
+            if !converted.isEmpty {
+                legacy.nextTargetButton.performClick(nil)
+                check(visible && unchanged && restored.timers[0].input == converted,
+                      "whitespace-wrapped explicit target displays correctly, keeps its original bytes and converts cleanly")
+            } else {
+                legacy.primaryButton.performClick(nil)
+                let expected = try? TimerInputParser.targetDate(raw, now: Date())
+                check(visible && unchanged && restored.timers[0].input == raw.trimmingCharacters(in: .whitespacesAndNewlines) && restored.timers[0].state == .running &&
+                      abs(restored.timers[0].deadline?.timeIntervalSince(expected ?? .distantPast) ?? 999) < 2,
+                      "whitespace-wrapped time-only target keeps its exact bytes and starts at the matching time")
+            }
+            restored.remove(saved.id)
+        }
+
         for text in ["2001-01-02 12:34:56", "12:34:56"] {
             var saved = ClockTimer()
             saved.inputKind = .targetTime
@@ -1521,6 +1556,108 @@ enum RuntimeChecks {
         last.deleteButton.performClick(nil)
         check(stopped && timers.timers.count == 2 && settings.faceSize == 420,
               "small screen scrolled stop and delete controls operate without changing the configured dial size")
+    }
+
+    private static func checkVeryShortScreenTimerViewport(_ check: (Bool, String) -> Void) {
+        for height in [430.0, 460, 480] {
+            for count in [1, 3] {
+                for above in [true, false] {
+                    let suite = "FloatingClock.very-short-screen.\(UUID())"
+                    let defaults = UserDefaults(suiteName: suite)!
+                    defer { defaults.removePersistentDomain(forName: suite) }
+                    var settings = ClockSettings()
+                    settings.faceSize = 420
+                    let screen = CGRect(x: 0, y: 0, width: 640, height: height)
+                    let panel = ClockPanel(settings: settings)
+                    panel.layoutScreenFrameOverride = screen
+                    let scheduler = CheckTimerNotifications()
+                    scheduler.message = "通知未开启"
+                    let timers = TimerCoordinator(store: ClockTimerStore(defaults: defaults), notifications: scheduler)
+                    panel.timerCoordinator = timers
+                    timers.onChange = { [weak panel] in panel?.refreshTimers() }
+                    panel.showClock()
+                    for _ in 0..<count {
+                        _ = timers.add()
+                        panel.timerTray.rows.last!.primaryButton.performClick(nil)
+                    }
+                    panel.face.layoutSubtreeIfNeeded()
+                    let side = panel.clockScreenFrame.width
+                    let dial = CGRect(x: 100, y: above ? 2 : height - side - 2, width: side, height: side)
+                    panel.face.onDragMoved?(dial)
+                    let movedToEdge = panel.clockScreenFrame == dial
+                    func event(_ type: NSEvent.EventType, _ point: CGPoint) -> NSEvent {
+                        NSEvent.mouseEvent(with: type, location: panel.convertPoint(fromScreen: point), modifierFlags: [],
+                                           timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber,
+                                           context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)!
+                    }
+                    let grip = CGPoint(x: dial.minX + dial.width * 0.4, y: dial.minY + dial.height * 0.65)
+                    panel.sendEvent(event(.leftMouseDown, grip))
+                    let shifted = CGPoint(x: grip.x + 3, y: grip.y + (above ? 3 : -3))
+                    panel.sendEvent(event(.leftMouseDragged, shifted))
+                    let dragAnchored = movedToEdge && panel.clockScreenFrame == dial.offsetBy(dx: 3, dy: above ? 3 : -3)
+                    panel.sendEvent(event(.leftMouseUp, shifted))
+                    panel.layoutScreenFrameOverride = screen
+                    panel.face.layoutSubtreeIfNeeded()
+                    let tray = panel.timerTray
+                    var reachable = true
+                    for row in tray.rows {
+                        row.scrollToVisible(row.bounds)
+                        tray.scrollView.reflectScrolledClipView(tray.scrollView.contentView)
+                        for button in [row.primaryButton, row.deleteButton] {
+                            let rect = button.convert(button.bounds, to: tray.scrollView.contentView)
+                            let onScreen = panel.convertToScreen(button.convert(button.bounds, to: panel.face))
+                            let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: panel.face)
+                            let hit = panel.face.hitTest(point)
+                            reachable = reachable && tray.scrollView.contentView.bounds.contains(rect) && screen.contains(onScreen) &&
+                                (hit === button || (hit?.isDescendant(of: button) ?? false))
+                        }
+                    }
+                    let usableViewport = tray.scrollView.contentView.bounds.height >= 80
+                    let contained = screen.contains(panel.frame)
+                    let correctDirection = (tray.frame.midY > panel.face.dialCard.midY) == above
+                    panel.layoutScreenFrameOverride = CGRect(x: 0, y: 0, width: 1280, height: 900)
+                    panel.constrainAndSavePosition()
+                    check(panel.clockScreenFrame.width == 444 && panel.face.settings.faceSize == 420 && timers.timers.count == count,
+                          "\(Int(height))pt screen restores the preferred dial with timers active on a larger display")
+                    panel.layoutScreenFrameOverride = screen
+                    panel.face.layoutSubtreeIfNeeded()
+                    let last = tray.rows.last!
+                    last.scrollToVisible(last.bounds)
+                    last.primaryButton.performClick(nil)
+                    let stopped = timers.timers.last?.state == .paused
+                    last.resetButton.performClick(nil)
+                    let id = last.id
+                    timers.setInputKind(id, kind: .targetTime)
+                    timers.editInput(id, text: "2001-01-02 12:34:56")
+                    panel.face.layoutSubtreeIfNeeded()
+                    last.scrollToVisible(last.bounds)
+                    var editorReachable = true
+                    var inaccessibleControls: [String] = []
+                    for control in [last.signButton, last.kindButton, last.nextTargetButton, last.primaryButton, last.deleteButton,
+                                    last.targetInput.hours.field, last.targetInput.minutes.field] as [NSView] {
+                        let rect = control.convert(control.bounds, to: tray.scrollView.contentView)
+                        let onScreen = panel.convertToScreen(control.convert(control.bounds, to: panel.face))
+                        let point = control.convert(CGPoint(x: control.bounds.midX, y: control.bounds.midY), to: panel.face)
+                        let hit = panel.face.hitTest(point)
+                        let accessible = tray.scrollView.contentView.bounds.contains(rect) && screen.contains(onScreen) &&
+                            (hit === control || (hit?.isDescendant(of: control) ?? false))
+                        if !accessible { inaccessibleControls.append("\(control) rect=\(rect) clip=\(tray.scrollView.contentView.bounds) screen=\(onScreen) hit=\(String(describing: hit))") }
+                        editorReachable = editorReachable && accessible
+                    }
+                    last.nextTargetButton.performClick(nil)
+                    let converted = timers.timers.last?.input == "12:34:56"
+                    last.primaryButton.performClick(nil)
+                    let restarted = timers.timers.last?.state == .running
+                    last.primaryButton.performClick(nil)
+                    last.deleteButton.performClick(nil)
+                    let deleted = timers.timers.count == count - 1
+                    check(dragAnchored && contained && correctDirection && usableViewport &&
+                          reachable && editorReachable && stopped && converted && restarted && deleted && panel.face.settings.faceSize == 420,
+                          "\(Int(height))pt screen, \(count) timers, \(above ? "above" : "below") fits, keeps drag anchor, and reaches stop and delete (drag=\(dragAnchored) contained=\(contained) direction=\(correctDirection) viewport=\(usableViewport) running=\(reachable) editor=\(editorReachable) stopped=\(stopped) converted=\(converted) restarted=\(restarted) deleted=\(deleted) inaccessible=\(inaccessibleControls))")
+                    panel.hideClock()
+                }
+            }
+        }
     }
 
     static func renderPreview(to path: String) throws {

@@ -193,7 +193,7 @@ final class TimerTimeInput: NSStackView {
         updateRevision += 1
         guard hours.field.currentEditor() == nil, minutes.field.currentEditor() == nil else { return }
         if kind == .targetTime {
-            let parts = input.split(separator: " ")
+            let parts = input.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: " ")
             let time = (parts.last ?? "").split(separator: ":", omittingEmptySubsequences: false)
             guard (time.count == 2 || time.count == 3), let hour = Int(time[0]), let minute = Int(time[1]),
                   (0...23).contains(hour), (0...59).contains(minute) else { return }

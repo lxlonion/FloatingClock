@@ -105,7 +105,7 @@ final class TimerRowView: NSView {
             line.heightAnchor.constraint(equalToConstant: 38),
             statusLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             nextTargetButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            nextTargetButton.centerYAnchor.constraint(equalTo: statusLabel.centerYAnchor),
+            nextTargetButton.centerYAnchor.constraint(equalTo: statusLabel.centerYAnchor, constant: -1),
             nextTargetButton.widthAnchor.constraint(equalToConstant: 76),
             nextTargetButton.heightAnchor.constraint(equalToConstant: 16),
             statusLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),

@@ -159,7 +159,8 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
 
     func constrainAndSavePosition() {
         let dial = clockScreenFrame
-        let origin = ClockLayout.clampedOrigin(dial.origin, size: dial.width, screens: NSScreen.screens.map(\.visibleFrame))
+        let screens = layoutScreenFrameOverride.map { [$0] } ?? NSScreen.screens.map(\.visibleFrame)
+        let origin = ClockLayout.clampedOrigin(dial.origin, size: dial.width, screens: screens)
         layoutPanel(anchoredAt: CGRect(origin: origin, size: dial.size))
         onPositionChanged?(clockScreenFrame.origin)
         refreshPointerLocation()
@@ -179,7 +180,14 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         layingOut = true
         defer { layingOut = false }
         let screenFrame = layoutScreenFrame(for: dial)
-        let layout = TimerAttachmentLayout(clock: dial, trayHeight: trayHeight, screen: screenFrame,
+        // Leave enough room for one complete timer row. This is a display-only
+        // size; settings.faceSize remains the user's preferred size.
+        let minimumTrayViewport = min(trayHeight, 80)
+        let maximumSide = max(1, min(screenFrame.width, screenFrame.height - footerHeight - minimumTrayViewport))
+        let preferredSide = settings.faceSize + ClockLayout.padding * 2
+        let side = constrainToScreen ? min(preferredSide, maximumSide) : dial.width
+        let displayDial = CGRect(x: dial.midX - side / 2, y: dial.midY - side / 2, width: side, height: side)
+        let layout = TimerAttachmentLayout(clock: displayDial, trayHeight: trayHeight, screen: screenFrame,
                                            footerHeight: footerHeight, constrainToScreen: constrainToScreen)
         if frame != layout.frame { setFrame(layout.frame, display: false) }
         face.dialFrame = layout.dialFrame
