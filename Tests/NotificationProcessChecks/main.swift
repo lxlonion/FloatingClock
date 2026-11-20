@@ -3,7 +3,6 @@ import Darwin
 import ClockCore
 import UserNotifications
 
-// A file-backed stand-in for the OS: it outlives either application process.
 final class DiskCenter: TimerNotificationCenter {
     let path: URL
     var callback: (([UNNotificationRequest]) -> Void)?
@@ -72,7 +71,6 @@ if stage == "start" {
     if action.hasSuffix("pause") { coordinator.primaryAction(id) }
     if action.hasSuffix("delete") { coordinator.remove(id) }
     if action.hasPrefix("observed-") {
-        // Simulate a force quit before the pending callback can run.
         precondition(center.read().isEmpty)
         fflush(nil)
         _exit(0)
@@ -81,7 +79,6 @@ if stage == "start" {
         precondition(!coordinator.prepareForTermination {})
         precondition(center.read().count == 1)
     } else {
-        // The normal new-format identifier is removable before the pending reply.
         precondition(center.read().count == (action.hasPrefix("legacy-") ? 1 : 0))
         var replied = false
         precondition(coordinator.prepareForTermination { replied = true })

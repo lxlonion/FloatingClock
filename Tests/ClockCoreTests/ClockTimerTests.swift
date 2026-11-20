@@ -31,7 +31,6 @@ final class ClockTimerTests: XCTestCase {
         XCTAssertEqual(timer.seconds(at: now.addingTimeInterval(-40), instant: TimerInstant(uptime: 10, bootID: "B")), 30)
         timer.reanchor(at: now.addingTimeInterval(40), instant: TimerInstant(uptime: 10, bootID: "B"))
         XCTAssertEqual(timer.seconds(at: now.addingTimeInterval(-100), instant: TimerInstant(uptime: 20, bootID: "B")), 80)
-        // Explicit-date callers retain their original deterministic semantics.
         XCTAssertEqual(timer.seconds(at: now.addingTimeInterval(50)), 80)
     }
 

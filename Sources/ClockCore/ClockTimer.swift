@@ -110,8 +110,6 @@ public enum TimerInputParser {
     }
 }
 
-// mach_continuous_time includes sleep. A boot-session identifier prevents an
-// uptime from a previous boot being mistaken for an anchor in this boot.
 public struct TimerInstant: Codable, Equatable {
     public let uptime: TimeInterval
     public let bootID: String
@@ -124,7 +122,7 @@ public struct TimerInstant: Codable, Equatable {
     private static let bootID: String = {
         var size: size_t = 0
         guard sysctlbyname("kern.bootsessionuuid", nil, &size, nil, 0) == 0, size > 0 else {
-            return UUID().uuidString // Safe only within this process if unavailable.
+            return UUID().uuidString
         }
         var bytes = [CChar](repeating: 0, count: size)
         guard sysctlbyname("kern.bootsessionuuid", &bytes, &size, nil, 0) == 0 else {
@@ -153,7 +151,6 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
     private var overtime: Bool?
     private var continuousStart: TimerInstant?
     public private(set) var notificationOccurrenceID: UUID?
-    // Set only while upgrading an existing running archive with no occurrence ID.
     public private(set) var legacyNotificationDeadline: Date?
     public var isOvertime: Bool { overtime == true }
     public var countsDown: Bool { mode == .countdown && !isOvertime }
@@ -178,8 +175,6 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
             return accumulated + instant.uptime - start.uptime
         }
         let delta = date.timeIntervalSince(startedAt ?? date)
-        // Absolute targets can be farther away than their original duration
-        // when the clock is set back before the start of the countdown.
         return accumulated + (inputKind == .targetTime ? delta : max(0, delta))
     }
 
@@ -191,8 +186,6 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
         return elapsed
     }
 
-    // Capture the elapsed value before changing anchors. On another boot (or for
-    // old archives) elapsed falls back to the saved wall-clock anchor, clamped at zero.
     public mutating func reanchor(at date: Date, instant: TimerInstant?) {
         guard state == .running, inputKind == .duration else { return }
         accumulated = elapsed(at: date, instant: instant)
@@ -230,7 +223,6 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
         legacyNotificationDeadline = nil
     }
 
-    // Upgrade an old archive once and persist the same identity across restarts.
     public mutating func prepareNotificationOccurrence() {
         guard notificationOccurrenceID == nil, let deadline else { return }
         notificationOccurrenceID = UUID()
@@ -241,8 +233,6 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
         guard state == .running else { return }
         finishIfNeeded(at: date, instant: instant)
         accumulated = elapsed(at: date, instant: instant)
-        // Once overtime has begun it stays overtime after a wall-clock rollback.
-        // Pausing freezes the displayed zero, so resuming counts from zero.
         if inputKind == .targetTime && isOvertime { accumulated = max(duration, accumulated) }
         startedAt = nil
         continuousStart = nil
@@ -304,8 +294,6 @@ public final class ClockTimerStore {
         return Array(uniqueTimers.prefix(3))
     }
 
-    // Only opaque timer, occurrence, and request identifiers are stored here.
-    // Keeping the index in the same defaults domain isolates alternate stores.
     public func loadNotificationRequestIndex() -> [String: [String: [String]]] {
         defaults.dictionary(forKey: "FloatingClock.notificationRequestIndex.v1") as? [String: [String: [String]]] ?? [:]
     }
@@ -313,7 +301,6 @@ public final class ClockTimerStore {
     public func saveNotificationRequestIndex(_ index: [String: [String: [String]]]) {
         let key = "FloatingClock.notificationRequestIndex.v1"
         if index.isEmpty { defaults.removeObject(forKey: key) } else { defaults.set(index, forKey: key) }
-        // Cancellation may be followed by a force quit in another process.
         defaults.synchronize()
     }
 

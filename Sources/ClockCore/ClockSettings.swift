@@ -61,8 +61,6 @@ public struct ClockSettings: Codable, Equatable {
         self.init()
         let values = try decoder.container(keyedBy: CodingKeys.self)
         transparency = (try? values.decode(Double.self, forKey: .transparency)) ?? transparency
-        // Preserve either custom layer when the other is damaged, using the linked
-        // value for the missing layer. An entirely unreadable object stays linked.
         if let layers = try? values.nestedContainer(keyedBy: TransparencyKeys.self, forKey: .customTransparency) {
             let content = try? layers.decode(Double.self, forKey: .content)
             let background = try? layers.decode(Double.self, forKey: .background)
@@ -85,7 +83,6 @@ public struct ClockSettings: Codable, Equatable {
         selectedClockSlot = (try? values.decode(ClockSlot.self, forKey: .selectedClockSlot)) ?? selectedClockSlot
         secondClockTimeZone = Self.decodeTimeZone(values, forKey: .secondClockTimeZone, fallback: secondClockTimeZone)
         thirdClockTimeZone = Self.decodeTimeZone(values, forKey: .thirdClockTimeZone, fallback: thirdClockTimeZone)
-        // A position needs both coordinates; never invent half of a screen position.
         origin = try? values.decode(StoredPoint.self, forKey: .origin)
     }
 

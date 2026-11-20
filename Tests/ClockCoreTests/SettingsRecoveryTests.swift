@@ -4,7 +4,6 @@ import XCTest
 final class SettingsRecoveryTests: XCTestCase {
     private let key = "FloatingClock.settings.v1"
 
-    // This mirrors the startup position callback: load, update origin, save and relaunch.
     private func startupRoundTrip(_ json: String, check: (ClockSettings) -> Void) {
         let suite = "FloatingClock.recovery.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -33,7 +32,6 @@ final class SettingsRecoveryTests: XCTestCase {
                              "minuteNumeralOpacity", "minuteNumeralSize", "isLocked", "showsSeconds", "showsDate",
                              "timerDisplayFormat", "selectedClockSlot"]
         for field in corruptFields {
-            // An array has the wrong type for every known scalar field.
             startupRoundTrip("{\"\(field)\":[],\"origin\":{\"x\":10,\"y\":20},\"thirdClockTimeZone\":{\"identifier\":\"Asia/Tokyo\",\"usesDaylightSavingTime\":false}}") { settings in
                 var withoutPosition = settings
                 withoutPosition.origin = nil

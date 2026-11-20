@@ -662,8 +662,6 @@ final class TimerNotificationsTests: XCTestCase {
         center.delayAuthorization = true
         let identifier = "FloatingClock.timer.\(timer.id.uuidString).\(UUID().uuidString)"
         let oldContent = UNMutableNotificationContent()
-        // A legacy delivery can have the same timer, target time and body, but a
-        // newly started occurrence must not claim it.
         oldContent.body = "已到达设定时间 18:40。"
         if !legacy { oldContent.userInfo = ["FloatingClock.occurrence.v1": oldOccurrence.uuidString] }
         center.deliveredDate = deadline
