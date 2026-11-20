@@ -85,16 +85,25 @@ final class TimerCoordinator {
     private let store: ClockTimerStore
     private let notifications: TimerNotificationScheduling
     private var ticker: Timer?
+    private let nowProvider: () -> Date
+    private let instantProvider: () -> TimerInstant
 
-    init(store: ClockTimerStore = ClockTimerStore(), notifications: TimerNotificationScheduling) {
+    init(store: ClockTimerStore = ClockTimerStore(), notifications: TimerNotificationScheduling,
+         now: @escaping () -> Date = Date.init, instant: @escaping () -> TimerInstant = TimerInstant.current) {
         self.store = store
         self.notifications = notifications
+        self.nowProvider = now
+        self.instantProvider = instant
         timers = store.load()
     }
 
-    func restore(at now: Date = Date()) {
+    func restore() { restore(at: nowProvider(), instant: instantProvider()) }
+    func restore(at now: Date) { restore(at: now, instant: nil) }
+
+    private func restore(at now: Date, instant: TimerInstant?) {
         for index in timers.indices {
-            timers[index].finishIfNeeded(at: now)
+            if instant != nil { timers[index].reanchor(at: now, instant: instant) }
+            timers[index].finishIfNeeded(at: now, instant: instant)
             if timers[index].state == .running { schedule(timers[index]) }
         }
         changed()
@@ -161,23 +170,26 @@ final class TimerCoordinator {
         changed()
     }
 
-    func primaryAction(_ id: UUID, at now: Date = Date()) {
+    func primaryAction(_ id: UUID) { primaryAction(id, at: nowProvider(), instant: instantProvider()) }
+    func primaryAction(_ id: UUID, at now: Date) { primaryAction(id, at: now, instant: nil) }
+
+    private func primaryAction(_ id: UUID, at now: Date, instant: TimerInstant?) {
         guard let index = timers.firstIndex(where: { $0.id == id }) else { return }
         errors[id] = nil
         switch timers[index].state {
         case .running:
-            timers[index].pause(at: now)
+            timers[index].pause(at: now, instant: instant)
             if !timers[index].isOvertime {
                 notifications.cancel(id)
                 notificationGenerations[id] = nil
                 notificationErrors[id] = nil
             }
         case .paused:
-            timers[index].resume(at: now)
+            timers[index].resume(at: now, instant: instant)
             schedule(timers[index])
         case .idle, .completed:
             do {
-                try timers[index].start(at: now)
+                try timers[index].start(at: now, instant: instant)
                 schedule(timers[index])
             } catch { errors[id] = error.localizedDescription }
         }
@@ -194,12 +206,22 @@ final class TimerCoordinator {
         changed()
     }
 
-    func tick(at now: Date = Date()) {
-        var completed = false
+    func tick() { tick(at: nowProvider(), instant: instantProvider()) }
+    func tick(at now: Date) { tick(at: now, instant: nil) }
+
+    private func tick(at now: Date, instant: TimerInstant?) {
+        var changedTimer = false
         for index in timers.indices {
-            if timers[index].finishIfNeeded(at: now) { completed = true }
+            // Persist a fresh wall anchor after a clock change, so recovery on a
+            // later boot has the best available estimate of the elapsed time.
+            if let instant, timers[index].state == .running, timers[index].inputKind == .duration,
+               abs(timers[index].elapsed(at: now, instant: instant) - timers[index].elapsed(at: now)) > 1 {
+                timers[index].reanchor(at: now, instant: instant)
+                changedTimer = true
+            }
+            if timers[index].finishIfNeeded(at: now, instant: instant) { changedTimer = true }
         }
-        if completed { changed() } else { onChange?() }
+        if changedTimer { changed() } else { onChange?() }
     }
 
     private func editableIndex(_ id: UUID) -> Int? {

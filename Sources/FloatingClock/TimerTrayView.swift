@@ -132,7 +132,7 @@ final class TimerRowView: NSView {
         signButton.isEnabled = timer.state != .running
         signButton.toolTip = "点击切换：＋ 倒计时，− 累计计时"
         signButton.setAccessibilityLabel(timer.countsDown ? "倒计时；点击切换为累计计时" : "累计计时；点击切换为倒计时")
-        let text = editing ? timer.input : settings.timerDisplayFormat.string(seconds: timer.seconds(at: now), countingDown: timer.countsDown)
+        let text = editing ? timer.input : settings.timerDisplayFormat.string(seconds: timer.seconds(at: now, instant: TimerInstant.current()), countingDown: timer.countsDown)
         if timeField.currentEditor() == nil && timeField.stringValue != text { timeField.stringValue = text }
         timeField.isEditable = false
         timeField.isSelectable = false

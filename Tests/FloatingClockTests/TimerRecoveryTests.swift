@@ -4,8 +4,10 @@ import ClockCore
 
 private final class RecoveryNotifications: TimerNotificationScheduling {
     var scheduled: [UUID] = []
+    var scheduledTimers: [ClockTimer] = []
     func schedule(_ timer: ClockTimer, completion: @escaping (String?) -> Void) {
         scheduled.append(timer.id)
+        scheduledTimers.append(timer)
         completion(nil)
     }
     func cancel(_ id: UUID) {}
@@ -15,6 +17,86 @@ final class TimerRecoveryTests: XCTestCase {
     private let key = "FloatingClock.timers.v1"
     private let recoveryKey = "FloatingClock.timers.v1.recovered"
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+    func testLiveClockJumpAndRelaunchScheduleCorrectRemainingTime() throws {
+        let suite = "FloatingClock.recovery.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var wall = now
+        var uptime: TimeInterval = 100
+        let scheduler = RecoveryNotifications()
+        var coordinator: TimerCoordinator? = TimerCoordinator(store: ClockTimerStore(defaults: defaults), notifications: scheduler,
+            now: { wall }, instant: { TimerInstant(uptime: uptime, bootID: "A") })
+        let id = try XCTUnwrap(coordinator!.add())
+        coordinator!.editInput(id, text: "60秒")
+        coordinator!.primaryAction(id)
+        wall = now.addingTimeInterval(3600)
+        uptime = 110
+        coordinator!.tick()
+        XCTAssertFalse(coordinator!.timers[0].isOvertime)
+        XCTAssertEqual(coordinator!.timers[0].seconds(at: wall, instant: TimerInstant(uptime: uptime, bootID: "A")), 50)
+        coordinator = nil
+        wall = now.addingTimeInterval(-3600)
+        uptime = 120
+        let nextScheduler = RecoveryNotifications()
+        let restarted = TimerCoordinator(store: ClockTimerStore(defaults: defaults), notifications: nextScheduler,
+            now: { wall }, instant: { TimerInstant(uptime: uptime, bootID: "A") })
+        restarted.restore()
+        XCTAssertEqual(restarted.timers[0].seconds(at: wall, instant: TimerInstant(uptime: uptime, bootID: "A")), 40)
+        XCTAssertEqual(nextScheduler.scheduledTimers.first?.deadline, wall.addingTimeInterval(40))
+        uptime = 165
+        restarted.tick()
+        XCTAssertTrue(restarted.timers[0].isOvertime)
+        XCTAssertEqual(restarted.timers[0].seconds(at: wall, instant: TimerInstant(uptime: uptime, bootID: "A")), 5)
+    }
+
+    func testLegacyAndNewBootRecoveryUseWallAnchor() throws {
+        let suite = "FloatingClock.recovery.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var legacy = ClockTimer()
+        legacy.input = "60秒"
+        try legacy.start(at: now)
+        var oldBoot = ClockTimer()
+        oldBoot.input = "60秒"
+        try oldBoot.start(at: now, instant: TimerInstant(uptime: 100, bootID: "A"))
+        ClockTimerStore(defaults: defaults).save([legacy, oldBoot])
+        let scheduler = RecoveryNotifications()
+        let wall = now.addingTimeInterval(20)
+        let coordinator = TimerCoordinator(store: ClockTimerStore(defaults: defaults), notifications: scheduler,
+            now: { wall }, instant: { TimerInstant(uptime: 200, bootID: "B") })
+        coordinator.restore()
+        XCTAssertEqual(scheduler.scheduledTimers.map(\.deadline), [wall.addingTimeInterval(40), wall.addingTimeInterval(40)])
+        XCTAssertEqual(coordinator.timers.map { $0.seconds(at: wall, instant: TimerInstant(uptime: 205, bootID: "B")) }, [35, 35])
+    }
+
+    func testTargetRollbackPausePersistsAndResumesWithFullRemainingDeadline() throws {
+        let suite = "FloatingClock.targetRollback.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let formatter = ISO8601DateFormatter()
+        let start = try XCTUnwrap(formatter.date(from: "2030-01-01T12:00:00Z"))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        var timer = ClockTimer()
+        timer.inputKind = .targetTime
+        timer.input = "2030-01-01 12:06"
+        try timer.start(at: start, calendar: calendar)
+        ClockTimerStore(defaults: defaults).save([timer])
+        let scheduler = RecoveryNotifications()
+        var coordinator: TimerCoordinator? = TimerCoordinator(store: ClockTimerStore(defaults: defaults), notifications: scheduler)
+        coordinator!.restore(at: start.addingTimeInterval(-60))
+        XCTAssertEqual(coordinator!.timers[0].seconds(at: start.addingTimeInterval(-60)), 420)
+        coordinator!.primaryAction(timer.id, at: start.addingTimeInterval(-60))
+        coordinator = nil
+        let restarted = TimerCoordinator(store: ClockTimerStore(defaults: defaults), notifications: scheduler)
+        restarted.restore(at: start.addingTimeInterval(20))
+        XCTAssertEqual(restarted.timers[0].seconds(at: start.addingTimeInterval(20)), 420)
+        restarted.primaryAction(timer.id, at: start.addingTimeInterval(20))
+        XCTAssertEqual(scheduler.scheduledTimers.last?.deadline, start.addingTimeInterval(440))
+        XCTAssertEqual(scheduler.scheduledTimers.last?.input, "2030-01-01 12:06")
+        XCTAssertEqual(scheduler.scheduledTimers.last?.inputKind, .targetTime)
+    }
 
     func testCoordinatorRecoversValidRecordsAndPersistsChangesAcrossRestarts() throws {
         let suite = "FloatingClock.recovery.\(UUID())"
