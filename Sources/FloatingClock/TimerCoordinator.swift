@@ -526,16 +526,10 @@ final class TimerCoordinator {
 
     func toggleMode(_ id: UUID) {
         guard let index = editableIndex(id) else { return }
-        let mode: ClockTimerMode = timers[index].countsDown ? .elapsed : .countdown
         notifications.cancel(id)
         notificationGenerations[id] = nil
         notificationErrors[id] = nil
-        timers[index].reset()
-        timers[index].mode = mode
-        if timers[index].mode == .elapsed {
-            timers[index].inputKind = .duration
-            timers[index].input = "0"
-        }
+        timers[index].toggleMode()
         errors[id] = nil
         changed()
     }
@@ -543,6 +537,7 @@ final class TimerCoordinator {
     func setInputKind(_ id: UUID, kind: ClockTimerInput, at now: Date = Date(), calendar: Calendar = .current) {
         guard let index = editableIndex(id) else { return }
         guard timers[index].inputKind != kind else { return }
+        let mode = timers[index].state == .idle ? timers[index].draft.mode : timers[index].mode
         notifications.cancel(id)
         notificationGenerations[id] = nil
         notificationErrors[id] = nil
@@ -556,7 +551,10 @@ final class TimerCoordinator {
             formatter.timeZone = calendar.timeZone
             formatter.dateFormat = "HH:mm"
             timers[index].input = formatter.string(from: now.addingTimeInterval(60))
-        } else { timers[index].input = timers[index].mode == .elapsed ? "0" : "5" }
+        } else {
+            timers[index].mode = mode
+            timers[index].input = mode == .elapsed ? "0" : "5"
+        }
         errors[id] = nil
         changed()
     }
