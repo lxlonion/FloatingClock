@@ -56,6 +56,11 @@ public struct TimerDraft {
         return Self.explicitMode(for: prefix) == nil ? text : "+" + text
     }
 
+    fileprivate var inputAfterStart: String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Self.explicitMode(for: trimmed.first) == nil ? text : String(trimmed.dropFirst())
+    }
+
     private static func explicitMode(for prefix: Character?) -> ClockTimerMode? {
         switch prefix {
         case "-", "−": return .elapsed
@@ -249,7 +254,7 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
         guard draft.mode == .elapsed || value > 0 else { throw TimerInputError.zeroCountdown }
         mode = draft.mode
         inputKind = draft.kind
-        input = draft.text
+        input = draft.inputAfterStart
         duration = value
         accumulated = mode == .elapsed ? value : 0
         startedAt = date

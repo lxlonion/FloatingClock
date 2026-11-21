@@ -108,6 +108,39 @@ final class TimerDraftInputTests: XCTestCase {
         }
     }
 
+    func testRestartAfterResetKeepsDirectionOfLegacyDoubleSignedInput() throws {
+        let target = try TimerInputParser.targetDate("0:01", now: now)
+        let fixtures: [(String, ClockTimerMode, ClockTimerInput, TimeInterval, String)] = [
+            ("-+5", .elapsed, .duration, 300, "5"),
+            ("− +5", .elapsed, .duration, 300, "5"),
+            ("+-0:01", .countdown, .duration, 1, "0:01"),
+            ("+-0:01", .countdown, .targetTime, target.timeIntervalSince(now), "0:01")
+        ]
+        for (input, mode, kind, seconds, savedInput) in fixtures {
+            let session = try DraftSession(input: input, kind: kind, now: now)
+            let row = session.row
+            let deadline = mode == .countdown ? now.addingTimeInterval(seconds) : nil
+            for startCount in 1...2 {
+                XCTAssertEqual(row.signButton.title, mode == .elapsed ? "−" : "+", input)
+                row.primaryButton.performClick(nil)
+                XCTAssertEqual(session.timer.state, .running, input)
+                XCTAssertEqual(session.timer.mode, mode, input)
+                XCTAssertEqual(session.timer.inputKind, kind, input)
+                XCTAssertEqual(session.timer.duration, seconds, input)
+                XCTAssertEqual(session.timer.accumulated, mode == .elapsed ? seconds : 0, input)
+                XCTAssertEqual(session.timer.deadline, deadline, input)
+                XCTAssertEqual(session.notifications.scheduled.count, mode == .countdown ? startCount : 0, input)
+                XCTAssertEqual(session.savedTimer?.input, savedInput, input)
+
+                row.primaryButton.performClick(nil)
+                XCTAssertEqual(session.timer.state, .paused, input)
+                row.resetButton.performClick(nil)
+                XCTAssertEqual(session.timer.state, .idle, input)
+                XCTAssertEqual(session.savedTimer?.mode, mode, input)
+            }
+        }
+    }
+
     func testEditedLegacyDraftKeepsItsDirectionUntilSignButtonOverridesIt() throws {
         let session = try DraftSession(input: "-5分30.5秒", now: now)
         let row = session.row
