@@ -473,11 +473,13 @@ final class TimerCoordinator {
     private var notificationGenerations: [UUID: UUID] = [:]
     var notificationMessage: String? { timers.compactMap { notificationErrors[$0.id] }.first }
     var onChange: (() -> Void)?
+    var onReadoutChange: ((Date, TimerInstant?) -> Void)?
     private let store: ClockTimerStore
     private let notifications: TimerNotificationScheduling
     private var ticker: Timer?
     private let nowProvider: () -> Date
     private let instantProvider: () -> TimerInstant
+    private var tickSample: (now: Date, instant: TimerInstant?)?
 
     init(store: ClockTimerStore = ClockTimerStore(), notifications: TimerNotificationScheduling,
          now: @escaping () -> Date = Date.init, instant: @escaping () -> TimerInstant = TimerInstant.current) {
@@ -610,17 +612,30 @@ final class TimerCoordinator {
     func tick() { tick(at: nowProvider(), instant: instantProvider()) }
     func tick(at now: Date) { tick(at: now, instant: nil) }
 
+    func readoutTime() -> (now: Date, instant: TimerInstant?) {
+        tickSample ?? (nowProvider(), instantProvider())
+    }
+
     private func tick(at now: Date, instant: TimerInstant?) {
-        var changedTimer = false
+        var reanchored = false
+        var finished = false
         for index in timers.indices {
             if let instant, timers[index].state == .running, timers[index].inputKind == .duration,
                abs(timers[index].elapsed(at: now, instant: instant) - timers[index].elapsed(at: now)) > 1 {
                 timers[index].reanchor(at: now, instant: instant)
-                changedTimer = true
+                reanchored = true
             }
-            if timers[index].finishIfNeeded(at: now, instant: instant) { changedTimer = true }
+            if timers[index].finishIfNeeded(at: now, instant: instant) { finished = true }
         }
-        if changedTimer { changed() } else { onChange?() }
+        if finished {
+            let previousSample = tickSample
+            tickSample = (now, instant)
+            defer { tickSample = previousSample }
+            changed()
+        } else {
+            if reanchored { store.save(timers) }
+            onReadoutChange?(now, instant)
+        }
     }
 
     private func editableIndex(_ id: UUID) -> Int? {

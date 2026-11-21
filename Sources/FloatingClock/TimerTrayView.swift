@@ -129,7 +129,8 @@ final class TimerRowView: NSView {
         CATransaction.commit()
     }
 
-    func refresh(timer: ClockTimer, settings: ClockSettings, error: String?, now: Date = Date()) {
+    func refresh(timer: ClockTimer, settings: ClockSettings, error: String?, now: Date = Date(),
+                 instant: TimerInstant? = TimerInstant.current()) {
         let editing = timer.state == .idle
         let draft = editing ? timer.draft : nil
         let mode = draft?.mode ?? timer.mode
@@ -151,8 +152,11 @@ final class TimerRowView: NSView {
         signButton.isEnabled = timer.state != .running
         signButton.toolTip = "点击切换：＋ 倒计时，− 累计计时"
         signButton.setAccessibilityLabel(countsDown ? "倒计时；点击切换为累计计时" : "累计计时；点击切换为倒计时")
-        let text = editing ? timer.input : settings.timerDisplayFormat.string(seconds: timer.seconds(at: now, instant: TimerInstant.current()), countingDown: timer.countsDown)
-        if timeField.currentEditor() == nil && timeField.stringValue != text { timeField.stringValue = text }
+        if editing {
+            setReadout(timer.input)
+        } else {
+            refreshReadout(timer: timer, format: settings.timerDisplayFormat, at: now, instant: instant)
+        }
         timeField.isEditable = false
         timeField.isSelectable = false
         timeField.font = .monospacedDigitSystemFont(ofSize: settings.faceSize < 224 ? 14 : 16, weight: .medium)
@@ -200,6 +204,14 @@ final class TimerRowView: NSView {
         statusLabel.toolTip = error ?? statusHelp ?? statusLabel.stringValue
         statusLabel.isHidden = statusLabel.stringValue.isEmpty
         applyAppearance()
+    }
+
+    func refreshReadout(timer: ClockTimer, format: TimerDisplayFormat, at now: Date, instant: TimerInstant?) {
+        setReadout(format.string(seconds: timer.seconds(at: now, instant: instant), countingDown: timer.countsDown))
+    }
+
+    private func setReadout(_ text: String) {
+        if timeField.stringValue != text && timeField.currentEditor() == nil { timeField.stringValue = text }
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -314,11 +326,18 @@ final class TimerTrayView: NSView {
         notice.stringValue = coordinator.notificationMessage == nil ? "" : "通知未就绪 · 请检查系统通知设置"
         notice.toolTip = coordinator.notificationMessage
         notice.isHidden = coordinator.notificationMessage == nil
-        let now = Date()
+        let (now, instant) = coordinator.readoutTime()
         for (row, timer) in zip(rows, coordinator.timers) {
-            row.refresh(timer: timer, settings: settings, error: coordinator.errors[timer.id], now: now)
+            row.refresh(timer: timer, settings: settings, error: coordinator.errors[timer.id], now: now, instant: instant)
         }
         needsLayout = true
+    }
+
+    func refreshReadouts(format: TimerDisplayFormat, at now: Date, instant: TimerInstant?) {
+        guard let coordinator else { return }
+        for (row, timer) in zip(rows, coordinator.timers) where timer.state == .running {
+            row.refreshReadout(timer: timer, format: format, at: now, instant: instant)
+        }
     }
 
     override func viewDidChangeEffectiveAppearance() {
