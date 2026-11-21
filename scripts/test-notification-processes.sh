@@ -19,7 +19,11 @@ swiftc -I "$TEMP_DIR" -L "$TEMP_DIR" -lClockCore -Xlinker -rpath -Xlinker "$TEMP
 for scenario in pause delete keep legacy-pause legacy-delete observed-pause observed-delete \
     duration-reanchor target-adopt same-delivered new-same-time new-next-day delete-delivered; do
     archive="$TEMP_DIR/$scenario.plist"
-    suite="FloatingClock.process-check.$(uuidgen)"
+    if ! uuid="$(uuidgen)" || [[ -z "$uuid" ]]; then
+        printf 'Could not generate a UUID for the notification test preferences domain.\n' >&2
+        exit 1
+    fi
+    suite="FloatingClock.process-check.$uuid"
     "$TEMP_DIR/check" start "$suite" "$archive" "$scenario"
     if [[ "$scenario" == observed-* ]]; then
         "$TEMP_DIR/check" observe "$suite" "$archive" "$scenario"
