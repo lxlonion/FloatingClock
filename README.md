@@ -348,7 +348,8 @@ FloatingClock/
 │   │   ├── TimerAttachmentLayout.swift   # 计时区上下展开布局
 │   │   └── QuickAccessLayout.swift      # 加号入口的自动换角与尺寸
 │   └── FloatingClock/
-│       ├── main.swift                  # 应用生命周期和状态协调
+│       ├── main.swift                  # 应用启动
+│       ├── AppDelegate.swift           # 应用生命周期和状态协调
 │       ├── ClockPanel.swift            # 漂浮窗口、穿透、显示与隐藏
 │       ├── ClockFaceView.swift         # 表盘与指针绘制
 │       ├── CardGeometry.swift          # 外卡与计时行的间距、关联圆角
@@ -358,18 +359,23 @@ FloatingClock/
 │       ├── QuickAccessPanel.swift      # 可点击的小加号窗口
 │       ├── TimerCoordinator.swift       # 计时调度与系统通知
 │       ├── TimerTrayView.swift          # 三组计时的输入和读数
-│       ├── TimerTimeInput.swift         # 共用数字框、上下调节与光标跳转
-│       ├── LiveDisplayChecks.swift     # WindowServer 实窗重绘回归
-│       ├── DialCacheChecks.swift       # 静态绘制缓存、失效与像素回归
-│       └── RuntimeChecks.swift         # 原生检查与文档预览生成
-├── Tests/ClockCoreTests/
+│       └── TimerTimeInput.swift         # 共用数字框、上下调节与光标跳转
+├── Development/
+│   ├── main.swift                      # 开发命令和参数校验
+│   ├── LiveDisplayChecks.swift         # WindowServer 实窗重绘回归
+│   ├── DialCacheChecks.swift           # 静态绘制缓存、失效与像素回归
+│   └── RuntimeChecks.swift             # 原生检查与文档预览生成
+├── Tests/
 ├── Resources/
 │   ├── Info.plist
 │   └── AppIcon.icns
 ├── docs/images/                        # README 使用的图片
 ├── scripts/
 │   ├── build.sh
+│   ├── dev.sh
+│   ├── build-dev.sh
 │   ├── test.sh
+│   ├── test-development-tools.sh
 │   ├── render-docs.sh
 │   ├── regenerate-icon.sh
 │   └── generate-icon.swift
@@ -397,15 +403,15 @@ FLOATING_CLOCK_OUTPUT_DIR="$PWD/work/test-build" bash scripts/build.sh
 ### 运行测试
 
 ```sh
-# XCTest 核心逻辑测试
 bash scripts/test.sh
 
-# 原生 AppKit 集成检查，需要可用的 macOS 图形会话
-./dist/FloatingClock.app/Contents/MacOS/FloatingClock --smoke-test
-
-# 真实窗口重绘检查：图片和 JSON 写入指定目录，需要可用的图形会话及窗口图像捕获
-./dist/FloatingClock.app/Contents/MacOS/FloatingClock --live-display-test "$PWD/work/live-display-check"
+bash scripts/dev.sh --smoke-test
+bash scripts/dev.sh --live-display-test "$PWD/work/live-display-check"
 ```
+
+`scripts/test.sh` 运行 XCTest、跨进程通知测试和开发命令的参数测试。原生集成检查和实窗检查需要可用的 macOS 图形会话。实窗检查还需要 WindowServer 返回窗口图像。原生集成检查将 JSON 写到标准输出，实窗检查将 PNG 和 `live-display.json` 写入指定目录。
+
+开发工具编译同一份 AppKit 界面代码，产物位于 `.build/development/FloatingClockDevelopment`，可通过 `FLOATING_CLOCK_BUILD_DIR` 调整缓存根目录。每次接受一个开发命令。缺少路径、多余参数或未知命令会显示用法并以状态码 64 退出。
 
 原生检查会短暂显示测试窗口，使用独立的临时 UserDefaults 域，完成后清理测试偏好；不会写入用户实际的时钟设置。通知调度使用替代实现验证安排、取消和延迟回调，不会在测试中请求系统通知授权。
 
@@ -437,16 +443,19 @@ bash scripts/test.sh
 bash scripts/render-docs.sh
 ```
 
-该脚本会构建到 `work/documentation-build/`，将中间预览写入 `work/documentation-previews/`，再复制文档使用的 10 张图片到 `docs/images/`。不会覆盖 `dist/` 中的已安装应用，也不会更改用户设置。
+该脚本通过开发工具将中间预览写入 `work/documentation-previews/`，再复制文档使用的 10 张图片到 `docs/images/`。
 
 这些图片直接由当前版本的 AppKit 界面和绘制代码生成；示例时钟时间固定为 10:15、日期为 14 日周六，不包含个人桌面内容。
 
 也可以单独生成更完整的预览：
 
 ```sh
-./dist/FloatingClock.app/Contents/MacOS/FloatingClock --render-style-previews /tmp/FloatingClock-styles
-./dist/FloatingClock.app/Contents/MacOS/FloatingClock --render-quick-previews /tmp/FloatingClock-corners
-./dist/FloatingClock.app/Contents/MacOS/FloatingClock --render-timer-previews /tmp/FloatingClock-timers
+mkdir -p work
+bash scripts/dev.sh --render-preview "$PWD/work/preview.png"
+bash scripts/dev.sh --render-style-previews "$PWD/work/style-previews"
+bash scripts/dev.sh --render-quick-previews "$PWD/work/quick-previews"
+bash scripts/dev.sh --render-timer-previews "$PWD/work/timer-previews"
+bash scripts/dev.sh --render-documentation-previews "$PWD/work/documentation-previews"
 ```
 
 重新生成应用图标使用 `bash scripts/regenerate-icon.sh`，该步骤需要 Python 3。

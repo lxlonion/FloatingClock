@@ -3,12 +3,10 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PREVIEW_DIR="$PROJECT_DIR/work/documentation-previews"
-APP_OUTPUT_DIR="$PROJECT_DIR/work/documentation-build"
 IMAGE_DIR="$PROJECT_DIR/docs/images"
 
-FLOATING_CLOCK_OUTPUT_DIR="$APP_OUTPUT_DIR" bash "$PROJECT_DIR/scripts/build.sh"
 mkdir -p "$PREVIEW_DIR" "$IMAGE_DIR"
-"$APP_OUTPUT_DIR/FloatingClock.app/Contents/MacOS/FloatingClock" --render-documentation-previews "$PREVIEW_DIR"
+"$PROJECT_DIR/scripts/dev.sh" --render-documentation-previews "$PREVIEW_DIR"
 
 cp "$PREVIEW_DIR/styles-light.png" "$IMAGE_DIR/dials-light.png"
 cp "$PREVIEW_DIR/styles-dark.png" "$IMAGE_DIR/dials-dark.png"
