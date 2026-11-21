@@ -482,8 +482,11 @@ final class AdvancedSettingsWindowController: NSWindowController, NSWindowDelega
     private func change(_ edit: (inout ClockSettings) -> Void) {
         var updated = settings
         edit(&updated)
-        settings = updated.normalized()
-        onSettingsChanged?(settings)
+        if let onSettingsChanged {
+            onSettingsChanged(updated)
+        } else {
+            settings = updated.normalized()
+        }
     }
 
     @objc private func styleChanged() { change { $0.style = ClockStyle.allCases[stylePopup.indexOfSelectedItem] } }
