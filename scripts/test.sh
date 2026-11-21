@@ -7,3 +7,4 @@ export SWIFTPM_MODULECACHE_OVERRIDE="$CLANG_MODULE_CACHE_PATH"
 swift test --disable-sandbox --package-path "$PROJECT_DIR" --scratch-path "$BUILD_DIR" --cache-path "$BUILD_DIR/cache" --config-path "$BUILD_DIR/config" --security-path "$BUILD_DIR/security"
 
 "$PROJECT_DIR/scripts/test-notification-processes.sh"
+"$PROJECT_DIR/scripts/test-development-tools.sh"
