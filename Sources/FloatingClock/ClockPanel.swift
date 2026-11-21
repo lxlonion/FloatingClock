@@ -8,7 +8,15 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
     let timerTray = TimerTrayView(frame: .zero)
     let timerHint = NSTextField(labelWithString: "＋ 倒计时  ·  − 累计时间")
     var timerCoordinator: TimerCoordinator? {
-        didSet { timerTray.coordinator = timerCoordinator; refreshTimers() }
+        didSet {
+            oldValue?.onReadoutChange = nil
+            timerTray.coordinator = timerCoordinator
+            timerCoordinator?.onReadoutChange = { [weak self] now, instant in
+                guard let self, self.isVisible else { return }
+                self.timerTray.refreshReadouts(format: self.settings.timerDisplayFormat, at: now, instant: instant)
+            }
+            refreshTimers()
+        }
     }
     private var ticker: Timer?
     private var pointerTracker: Timer?
@@ -143,7 +151,9 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
     }
 
     func showClock() {
+        let wasVisible = isVisible
         orderFrontRegardless()
+        if !wasVisible { timerCoordinator?.tick() }
         refreshPointerLocation()
         updateQuickAccess()
         startTicker()
