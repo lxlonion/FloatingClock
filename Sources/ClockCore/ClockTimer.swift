@@ -26,6 +26,50 @@ public enum ClockTimerMode: String, Codable { case countdown, elapsed }
 public enum ClockTimerInput: String, Codable { case duration, targetTime }
 public enum ClockTimerState: String, Codable { case idle, running, paused, completed }
 
+public struct TimerDraft {
+    public let originalInput: String
+    public let text: String
+    public let mode: ClockTimerMode
+    public let kind: ClockTimerInput
+    private let savedMode: ClockTimerMode
+    private let explicitMode: ClockTimerMode?
+
+    fileprivate init(input: String, mode: ClockTimerMode, kind: ClockTimerInput) {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        let explicitMode = Self.explicitMode(for: trimmed.first)
+        originalInput = input
+        text = explicitMode == nil ? trimmed : String(trimmed.dropFirst())
+        savedMode = mode
+        self.explicitMode = explicitMode
+        self.mode = explicitMode ?? mode
+        self.kind = self.mode == .elapsed ? .duration : kind
+    }
+
+    public func input(replacingTextWith text: String) -> String {
+        guard mode != savedMode else { return text }
+        return (mode == .elapsed ? "−" : "+") + text
+    }
+
+    fileprivate var countdownInput: String {
+        guard explicitMode == .elapsed else { return originalInput }
+        let prefix = text.trimmingCharacters(in: .whitespacesAndNewlines).first
+        return Self.explicitMode(for: prefix) == nil ? text : "+" + text
+    }
+
+    fileprivate var inputAfterStart: String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Self.explicitMode(for: trimmed.first) == nil ? text : String(trimmed.dropFirst())
+    }
+
+    private static func explicitMode(for prefix: Character?) -> ClockTimerMode? {
+        switch prefix {
+        case "-", "−": return .elapsed
+        case "+": return .countdown
+        default: return nil
+        }
+    }
+}
+
 public enum TimerInputError: Error, LocalizedError {
     case invalidDuration, invalidTarget, targetInPast, zeroCountdown
 
@@ -59,7 +103,7 @@ public enum TimerInputParser {
             guard seconds <= maximumDuration else { throw TimerInputError.invalidDuration }
             return seconds
         }
-        let regex = try! NSRegularExpression(pattern: #"([0-9]+(?:\.[0-9]+)?)(小时|时|hours?|hrs?|h|分钟|分|minutes?|mins?|m|秒钟|秒|seconds?|secs?|s)"#)
+        let regex = try! NSRegularExpression(pattern: #"([0-9]+(?:\.[0-9]+)?(?:e[+-]?[0-9]+)?)(小时|时|hours?|hrs?|h|分钟|分|minutes?|mins?|m|秒钟|秒|seconds?|secs?|s)"#)
         let range = NSRange(text.startIndex..., in: text)
         let matches = regex.matches(in: text, range: range)
         var end = 0
@@ -154,6 +198,7 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
     public private(set) var legacyNotificationDeadline: Date?
     public var isOvertime: Bool { overtime == true }
     public var countsDown: Bool { mode == .countdown && !isOvertime }
+    public var draft: TimerDraft { TimerDraft(input: input, mode: mode, kind: inputKind) }
 
     public init(id: UUID = UUID()) { self.id = id }
 
@@ -199,20 +244,17 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
     }
 
     public mutating func start(at date: Date, calendar: Calendar = .current, instant: TimerInstant? = nil) throws {
-        var text = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        var selectedMode = mode
-        if text.hasPrefix("-") || text.hasPrefix("−") { selectedMode = .elapsed; text.removeFirst() }
-        else if text.hasPrefix("+") { selectedMode = .countdown; text.removeFirst() }
+        let draft = self.draft
         let value: TimeInterval
-        if inputKind == .targetTime, selectedMode == .countdown {
-            value = try TimerInputParser.targetDate(text, now: date, calendar: calendar).timeIntervalSince(date)
+        if draft.kind == .targetTime {
+            value = try TimerInputParser.targetDate(draft.text, now: date, calendar: calendar).timeIntervalSince(date)
         } else {
-            value = try TimerInputParser.duration(text)
+            value = try TimerInputParser.duration(draft.text)
         }
-        guard selectedMode == .elapsed || value > 0 else { throw TimerInputError.zeroCountdown }
-        mode = selectedMode
-        if mode == .elapsed { inputKind = .duration }
-        input = text
+        guard draft.mode == .elapsed || value > 0 else { throw TimerInputError.zeroCountdown }
+        mode = draft.mode
+        inputKind = draft.kind
+        input = draft.inputAfterStart
         duration = value
         accumulated = mode == .elapsed ? value : 0
         startedAt = date
@@ -221,6 +263,20 @@ public struct ClockTimer: Codable, Equatable, Identifiable {
         state = .running
         notificationOccurrenceID = countsDown ? UUID() : nil
         legacyNotificationDeadline = nil
+    }
+
+    public mutating func toggleMode() {
+        let idleDraft = state == .idle ? draft : nil
+        let wasCountingDown = idleDraft.map { $0.mode == .countdown } ?? countsDown
+        reset()
+        mode = wasCountingDown ? .elapsed : .countdown
+        if mode == .elapsed {
+            inputKind = .duration
+            input = "0"
+        } else if let idleDraft {
+            inputKind = idleDraft.kind
+            input = idleDraft.countdownInput
+        }
     }
 
     public mutating func prepareNotificationOccurrence() {

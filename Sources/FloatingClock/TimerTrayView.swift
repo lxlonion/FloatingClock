@@ -131,22 +131,26 @@ final class TimerRowView: NSView {
 
     func refresh(timer: ClockTimer, settings: ClockSettings, error: String?, now: Date = Date()) {
         let editing = timer.state == .idle
+        let draft = editing ? timer.draft : nil
+        let mode = draft?.mode ?? timer.mode
+        let inputKind = draft?.kind ?? timer.inputKind
+        let countsDown = editing ? mode == .countdown : timer.countsDown
         isIdle = editing
-        currentInputKind = timer.inputKind
+        currentInputKind = inputKind
         selectedAppearance = settings.appearance
-        accentSign = timer.countsDown || timer.isOvertime
+        accentSign = countsDown || timer.isOvertime
         accentReadout = timer.isOvertime || timer.state == .completed
         hasError = error != nil
-        let editingDuration = editing && timer.inputKind == .duration
+        let editingDuration = editing && inputKind == .duration
+        let editingTarget = editing && inputKind == .targetTime
         durationInput.isHidden = !editingDuration
-        targetInput.isHidden = !editing || timer.inputKind != .targetTime
+        targetInput.isHidden = !editingTarget
         timeField.isHidden = editing
-        if editingDuration { durationInput.update(input: timer.input) }
-        if editing && timer.inputKind == .targetTime { targetInput.update(input: timer.input) }
-        signButton.title = timer.countsDown ? "+" : "−"
+        if let draft { (inputKind == .duration ? durationInput : targetInput).update(draft: draft) }
+        signButton.title = countsDown ? "+" : "−"
         signButton.isEnabled = timer.state != .running
         signButton.toolTip = "点击切换：＋ 倒计时，− 累计计时"
-        signButton.setAccessibilityLabel(timer.countsDown ? "倒计时；点击切换为累计计时" : "累计计时；点击切换为倒计时")
+        signButton.setAccessibilityLabel(countsDown ? "倒计时；点击切换为累计计时" : "累计计时；点击切换为倒计时")
         let text = editing ? timer.input : settings.timerDisplayFormat.string(seconds: timer.seconds(at: now, instant: TimerInstant.current()), countingDown: timer.countsDown)
         if timeField.currentEditor() == nil && timeField.stringValue != text { timeField.stringValue = text }
         timeField.isEditable = false
@@ -158,16 +162,16 @@ final class TimerRowView: NSView {
         primaryButton.toolTip = timer.state == .running ? "停止并保留当前时间" : (timer.state == .paused ? "继续计时" : "开始计时")
         primaryButton.setAccessibilityLabel(primaryButton.toolTip)
         kindButton.isHidden = !editing
-        kindButton.isEnabled = timer.mode == .countdown
-        let durationMode = timer.inputKind == .duration
+        kindButton.isEnabled = mode == .countdown
+        let durationMode = inputKind == .duration
         kindButton.image = NSImage(systemSymbolName: durationMode ? "stopwatch" : "arrow.right",
                                   accessibilityDescription: durationMode ? "时长" : "到点时间")
         kindButton.toolTip = durationMode ? "时长 · 点击切换为到点时间" : "到点时间 · 点击切换为时长"
         kindButton.setAccessibilityLabel(kindButton.toolTip)
         resetButton.isHidden = editing || timer.state == .running
         var statusHelp: String?
-        let targetDetail = editing && timer.inputKind == .targetTime ? targetInput.targetDetail : nil
-        nextTargetButton.isHidden = !editing || timer.inputKind != .targetTime || !targetInput.hasExplicitTargetDate
+        let targetDetail = editingTarget ? targetInput.targetDetail : nil
+        nextTargetButton.isHidden = !editingTarget || !targetInput.hasExplicitTargetDate
         if nextTargetButton.isHidden {
             statusBeforeNextButton.isActive = false
             statusFullWidth.isActive = true
@@ -180,7 +184,7 @@ final class TimerRowView: NSView {
             switch timer.state {
             case .idle:
                 if editingDuration, let preserved = durationInput.preservedDuration {
-                    statusLabel.stringValue = "原时长：\(settings.timerDisplayFormat.string(seconds: preserved, countingDown: timer.countsDown))"
+                    statusLabel.stringValue = "原时长：\(settings.timerDisplayFormat.string(seconds: preserved, countingDown: countsDown))"
                     statusHelp = "原时长：\(preserved)秒。旧时长超出输入范围；未修改时完整保留，修改小时或分钟将使用新时长。"
                 } else if editingDuration && durationInput.remainingSeconds > 0 {
                     statusLabel.stringValue = "另含 \(durationInput.remainingSeconds)秒"

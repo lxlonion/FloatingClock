@@ -145,18 +145,18 @@ final class TimerTimeInput: NSStackView {
     private(set) var remainingSeconds: TimeInterval = 0
     private var targetDatePrefix = ""
     private var targetSecondsSuffix = ""
-    private var updateRevision = 0
-    private var originalTarget: (text: String, hours: Int, minutes: Int)?
+    private var draft: TimerDraft?
+    private var displayedDraft: (text: String, hours: Int, minutes: Int)?
+    private var oversizedDuration: TimeInterval?
     var hasExplicitTargetDate: Bool { !targetDatePrefix.isEmpty }
     var targetDetail: String? {
         guard kind == .targetTime, hasExplicitTargetDate || !targetSecondsSuffix.isEmpty else { return nil }
         return targetDatePrefix + String(format: "%02d:%02d", hours.value, minutes.value) + targetSecondsSuffix
     }
-    private var originalDuration: (seconds: TimeInterval, hours: Int, minutes: Int)?
     var preservedDuration: TimeInterval? {
-        guard let originalDuration, hours.value == originalDuration.hours,
-              minutes.value == originalDuration.minutes else { return nil }
-        return originalDuration.seconds
+        guard let displayedDraft, hours.value == displayedDraft.hours,
+              minutes.value == displayedDraft.minutes else { return nil }
+        return oversizedDuration
     }
     var onChange: ((String) -> Void)?
     var onSubmit: (() -> Void)?
@@ -189,31 +189,39 @@ final class TimerTimeInput: NSStackView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    func update(input: String) {
-        updateRevision += 1
-        guard hours.field.currentEditor() == nil, minutes.field.currentEditor() == nil else { return }
+    func update(draft: TimerDraft) {
+        self.draft = draft
+        updateFields()
+    }
+
+    private func updateFields() {
+        guard let draft, hours.field.currentEditor() == nil, minutes.field.currentEditor() == nil else { return }
+        var hour = 0
+        var minute = 0
         if kind == .targetTime {
-            let parts = input.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: " ")
+            targetDatePrefix = ""
+            targetSecondsSuffix = ""
+            let parts = draft.text.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: " ")
             let time = (parts.last ?? "").split(separator: ":", omittingEmptySubsequences: false)
-            guard (time.count == 2 || time.count == 3), let hour = Int(time[0]), let minute = Int(time[1]),
-                  (0...23).contains(hour), (0...59).contains(minute) else { return }
-            targetDatePrefix = parts.count == 2 ? String(parts[0]) + " " : ""
-            targetSecondsSuffix = time.count == 3 ? ":" + String(time[2]) : ""
-            originalTarget = (input, hour, minute)
-            hours.update(value: hour)
-            minutes.update(value: minute)
-            return
+            if (time.count == 2 || time.count == 3), let targetHour = Int(time[0]), let targetMinute = Int(time[1]),
+               (0...23).contains(targetHour), (0...59).contains(targetMinute) {
+                hour = targetHour
+                minute = targetMinute
+                targetDatePrefix = parts.count == 2 ? String(parts[0]) + " " : ""
+                targetSecondsSuffix = time.count == 3 ? ":" + String(time[2]) : ""
+            }
+        } else {
+            let seconds = (try? TimerInputParser.duration(draft.text)) ?? 0
+            let whole = Int(seconds)
+            remainingSeconds = seconds.truncatingRemainder(dividingBy: 60)
+            hour = min(9_999, whole / 3600)
+            let remainingMinutes = (whole - hour * 3600) / 60
+            minute = min(9_999, remainingMinutes)
+            oversizedDuration = remainingMinutes > minute ? seconds : nil
         }
-        let unsigned = input.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "+-−"))
-        guard let seconds = try? TimerInputParser.duration(unsigned) else { return }
-        let whole = Int(seconds)
-        remainingSeconds = seconds.truncatingRemainder(dividingBy: 60)
-        let displayedHours = min(9_999, whole / 3600)
-        let remainingMinutes = (whole - displayedHours * 3600) / 60
-        let displayedMinutes = min(9_999, remainingMinutes)
-        originalDuration = remainingMinutes > displayedMinutes ? (seconds, displayedHours, displayedMinutes) : nil
-        hours.update(value: displayedHours)
-        minutes.update(value: displayedMinutes)
+        displayedDraft = (draft.originalInput, hour, minute)
+        hours.update(value: hour)
+        minutes.update(value: minute)
     }
 
     func apply(palette: ClockPalette) {
@@ -222,30 +230,28 @@ final class TimerTimeInput: NSStackView {
     }
 
     func commit() {
+        guard let draft else { return }
+        let hour = hours.value
+        let minute = minutes.value
         let input: String
-        if kind == .targetTime {
-            guard (0...23).contains(hours.value), (0...59).contains(minutes.value) else { return }
-            if let originalTarget, originalTarget.hours == hours.value, originalTarget.minutes == minutes.value {
-                input = originalTarget.text
-            } else {
-                input = targetDatePrefix + String(format: "%02d:%02d", hours.value, minutes.value) + targetSecondsSuffix
-            }
+        if let displayedDraft, hour == displayedDraft.hours, minute == displayedDraft.minutes {
+            input = displayedDraft.text
+        } else if kind == .targetTime {
+            guard (0...23).contains(hour), (0...59).contains(minute) else { return }
+            let text = targetDatePrefix + String(format: "%02d:%02d", hour, minute) + targetSecondsSuffix
+            input = draft.input(replacingTextWith: text)
         } else {
-            let total = preservedDuration ?? min(TimerInputParser.maximumDuration, Double(hours.value) * 3600 + Double(minutes.value) * 60 + remainingSeconds)
-            input = "\(total)秒"
+            let total = min(TimerInputParser.maximumDuration, Double(hour) * 3600 + Double(minute) * 60 + remainingSeconds)
+            input = draft.input(replacingTextWith: "\(total)秒")
         }
-        onChange?(input)
-        let revision = updateRevision
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.updateRevision == revision else { return }
-            self.update(input: input)
-        }
+        if input != draft.originalInput { onChange?(input) }
+        DispatchQueue.main.async { [weak self] in self?.updateFields() }
     }
 
     func useNextTargetTime() {
         guard kind == .targetTime, hasExplicitTargetDate else { return }
         targetDatePrefix = ""
-        originalTarget = nil
+        displayedDraft = nil
         commit()
     }
 
