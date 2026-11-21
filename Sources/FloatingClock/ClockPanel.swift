@@ -17,9 +17,10 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
     private var layingOut = false
     private var trayHeight: CGFloat = 0
     private var footerHeight: CGFloat = 0
+    private var settledOrigin: CGPoint?
     var onPositionChanged: ((CGPoint) -> Void)?
     var onQuickMenuRequested: ((NSView) -> Void)?
-    var layoutScreenFrameOverride: CGRect? { didSet { layoutPanel(anchoredAt: clockScreenFrame) } }
+    var layoutScreenFrameOverride: CGRect? { didSet { constrainPosition() } }
     var mouseLocationProvider: () -> CGPoint = { NSEvent.mouseLocation }
 
     override var canBecomeKey: Bool { !settings.isLocked && !(timerCoordinator?.timers.isEmpty ?? true) }
@@ -59,7 +60,7 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
             self?.refreshPointerLocation()
             self?.updateQuickAccess()
         }
-        face.onDragFinished = { [weak self] in self?.constrainAndSavePosition() }
+        face.onDragFinished = { [weak self] in self?.constrainPosition() }
         face.onHoverChanged = { [weak self] inside in
             guard let self, !self.settings.isLocked else { return }
             self.pointerInside = inside
@@ -81,48 +82,64 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         timerTray.isHidden = true
         delegate = self
         quickAccessPanel.onOpen = { [weak self] view in self?.onQuickMenuRequested?(view) }
+        layoutPanel(anchoredAt: clockScreenFrame, preservingOrigin: true)
         apply(settings)
     }
 
     func apply(_ value: ClockSettings) {
-        let previousDial = clockScreenFrame
+        let previous = settings
         settings = value.normalized()
-        let side = settings.faceSize + ClockLayout.padding * 2
-        let origin = CGPoint(x: previousDial.midX - side / 2, y: previousDial.midY - side / 2)
-        let clamped = ClockLayout.clampedOrigin(origin, size: side, screens: NSScreen.screens.map(\.visibleFrame))
         face.settings = settings
         alphaValue = face.compositingAlpha
         timerTray.alphaValue = face.relativeContentAlpha
         timerHint.alphaValue = face.relativeContentAlpha
         addTimerButton.alphaValue = face.relativeContentAlpha
         ignoresMouseEvents = settings.isLocked
-        if settings.isLocked { makeFirstResponder(nil); resignKey() }
-        timerTray.appearance = settings.appearance == .system ? nil : NSAppearance(named: settings.appearance == .dark ? .darkAqua : .aqua)
-        timerHint.appearance = timerTray.appearance
-        timerTray.refresh(settings: settings)
-        layoutPanel(anchoredAt: CGRect(origin: clamped, size: CGSize(width: side, height: side)))
+
+        let appearance: NSAppearance? = settings.appearance == .system ? nil :
+            NSAppearance(named: settings.appearance == .dark ? .darkAqua : .aqua)
+        if timerTray.appearance?.name != appearance?.name {
+            timerTray.appearance = appearance
+            timerHint.appearance = appearance
+        }
+        let faceSizeChanged = previous.faceSize != settings.faceSize
+        if faceSizeChanged || previous.appearance != settings.appearance || previous.timerDisplayFormat != settings.timerDisplayFormat {
+            timerTray.refresh(settings: settings)
+            if updateTimerHeights() || faceSizeChanged {
+                settlePosition(anchoredAt: clockScreenFrame)
+            }
+        }
+        if settings.isLocked && !previous.isLocked { makeFirstResponder(nil); resignKey() }
         refreshPointerLocation()
         updateQuickAccess()
-        if isVisible { startTicker(); startPointerTracking() }
+        if isVisible && settings.showsSeconds != previous.showsSeconds { startTicker() }
+        if isVisible && settings.isLocked != previous.isLocked { startPointerTracking() }
     }
 
     func refreshTimers() {
         timerTray.refresh(settings: settings)
-        let height = timerTray.contentHeight
-        let newFooterHeight: CGFloat = timerCoordinator?.timers.count == 1 ? 28 : 0
-        timerHint.isHidden = newFooterHeight == 0
-        timerTray.isHidden = height == 0
-        if height != trayHeight || footerHeight != newFooterHeight {
-            let dial = clockScreenFrame
-            trayHeight = height
-            footerHeight = newFooterHeight
-            layoutPanel(anchoredAt: dial)
-            onPositionChanged?(clockScreenFrame.origin)
+        if updateTimerHeights() {
+            if face.isDragging {
+                layoutPanel(anchoredAt: clockScreenFrame, constrainToScreen: false)
+            } else {
+                settlePosition(anchoredAt: clockScreenFrame)
+            }
             refreshPointerLocation()
         }
         if timerCoordinator?.timers.isEmpty == true { makeFirstResponder(nil); resignKey() }
         addTimerButton.toolTip = (timerCoordinator?.timers.count ?? 0) >= 3 ? "已达三组上限，请先删除一组" : "添加倒计时 / 累计计时（最多三组）"
         updateQuickAccess()
+    }
+
+    private func updateTimerHeights() -> Bool {
+        let height = timerTray.contentHeight
+        let newFooterHeight: CGFloat = timerCoordinator?.timers.count == 1 ? 28 : 0
+        guard height != trayHeight || newFooterHeight != footerHeight else { return false }
+        trayHeight = height
+        footerHeight = newFooterHeight
+        timerHint.isHidden = footerHeight == 0
+        timerTray.isHidden = trayHeight == 0
+        return true
     }
 
     func showClock() {
@@ -151,19 +168,28 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
         guard let screen else { return }
         let side = settings.faceSize + ClockLayout.padding * 2
         let origin = ClockLayout.defaultOrigin(size: side, screen: screen.visibleFrame)
-        layoutPanel(anchoredAt: CGRect(x: origin.x, y: origin.y, width: side, height: side))
-        constrainAndSavePosition()
+        settlePosition(anchoredAt: CGRect(origin: origin, size: CGSize(width: side, height: side)))
         showClock()
     }
 
-    func constrainAndSavePosition() {
-        let dial = clockScreenFrame
-        let screens = layoutScreenFrameOverride.map { [$0] } ?? NSScreen.screens.map(\.visibleFrame)
-        let origin = ClockLayout.clampedOrigin(dial.origin, size: dial.width, screens: screens)
-        layoutPanel(anchoredAt: CGRect(origin: origin, size: dial.size))
-        onPositionChanged?(clockScreenFrame.origin)
+    func restorePosition(_ origin: StoredPoint?) {
+        var dial = clockScreenFrame
+        if let origin { dial.origin = CGPoint(x: origin.x, y: origin.y) }
+        settlePosition(anchoredAt: dial, preservingOrigin: true)
+    }
+
+    func constrainPosition() {
+        settlePosition(anchoredAt: clockScreenFrame)
         refreshPointerLocation()
         updateQuickAccess()
+    }
+
+    private func settlePosition(anchoredAt dial: CGRect, preservingOrigin: Bool = false) {
+        layoutPanel(anchoredAt: dial, preservingOrigin: preservingOrigin)
+        let origin = clockScreenFrame.origin
+        guard origin != settledOrigin else { return }
+        settledOrigin = origin
+        onPositionChanged?(origin)
     }
 
     func windowDidMove(_ notification: Notification) {
@@ -174,16 +200,22 @@ final class ClockPanel: NSPanel, NSWindowDelegate {
     }
     func windowDidResize(_ notification: Notification) { if !layingOut { updateQuickAccess() } }
 
-    private func layoutPanel(anchoredAt dial: CGRect, constrainToScreen: Bool = true) {
+    private func layoutPanel(anchoredAt dial: CGRect, constrainToScreen: Bool = true, preservingOrigin: Bool = false) {
         guard !layingOut else { return }
         layingOut = true
         defer { layingOut = false }
-        let screenFrame = layoutScreenFrame(for: dial)
+        var screenAnchor = dial
+        if constrainToScreen && layoutScreenFrameOverride == nil {
+            screenAnchor.origin = ClockLayout.clampedOrigin(dial.origin, size: dial.width, screens: NSScreen.screens.map(\.visibleFrame))
+        }
+        let screenFrame = layoutScreenFrame(for: screenAnchor)
         let minimumTrayViewport = min(trayHeight, 80)
         let maximumSide = max(1, min(screenFrame.width, screenFrame.height - footerHeight - minimumTrayViewport))
         let preferredSide = settings.faceSize + ClockLayout.padding * 2
         let side = constrainToScreen ? min(preferredSide, maximumSide) : dial.width
-        let displayDial = CGRect(x: dial.midX - side / 2, y: dial.midY - side / 2, width: side, height: side)
+        let preferredOrigin = preservingOrigin ? dial.origin : CGPoint(x: dial.midX - side / 2, y: dial.midY - side / 2)
+        let origin = constrainToScreen ? ClockLayout.clampedOrigin(preferredOrigin, size: side, screens: [screenFrame]) : preferredOrigin
+        let displayDial = CGRect(origin: origin, size: CGSize(width: side, height: side))
         let layout = TimerAttachmentLayout(clock: displayDial, trayHeight: trayHeight, screen: screenFrame,
                                            footerHeight: footerHeight, constrainToScreen: constrainToScreen)
         if frame != layout.frame { setFrame(layout.frame, display: false) }

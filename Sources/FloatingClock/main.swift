@@ -2,34 +2,24 @@ import AppKit
 import ClockCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let store = SettingsStore()
-    private var settings = ClockSettings()
-    private var panel: ClockPanel!
-    private var menuController: MenuController!
+    private let store: SettingsStore
+    private var settings: ClockSettings
+    let panel: ClockPanel
+    let menuController: MenuController
     private var advancedSettingsController: AdvancedSettingsWindowController?
-    private var timerCoordinator: TimerCoordinator!
+    private var timerCoordinator: TimerCoordinator?
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        settings = store.load()
+    init(store: SettingsStore = SettingsStore(), includeStatusItem: Bool = true) {
+        self.store = store
+        let settings = store.load()
+        self.settings = settings
         panel = ClockPanel(settings: settings)
-        timerCoordinator = TimerCoordinator(notifications: TimerNotifications())
-        panel.timerCoordinator = timerCoordinator
-        timerCoordinator.onChange = { [weak self] in self?.panel.refreshTimers() }
-        timerCoordinator.restore()
-        menuController = MenuController(settings: settings)
-        panel.onPositionChanged = { [weak self] origin in
-            guard let self else { return }
-            self.settings.origin = StoredPoint(x: origin.x, y: origin.y)
-            self.store.save(self.settings)
-            self.menuController.settings = self.settings
-            self.advancedSettingsController?.settings = self.settings
-        }
-        menuController.onSettingsChanged = { [weak self] updated in
-            guard let self else { return }
-            self.applySettings(updated)
-        }
-        menuController.onShowAdvancedSettings = { [weak self] in self?.showAdvancedSettings() }
-        menuController.onMoveToCurrentScreen = { [weak self] in self?.moveClockToCurrentScreen() }
+        menuController = MenuController(settings: settings, includeStatusItem: includeStatusItem)
+        super.init()
+
+        menuController.onSettingsChanged = { [weak self] in self?.applySettings($0) }
+        menuController.onShowAdvancedSettings = { [weak self] in self?.advancedSettings().showSettings() }
+        menuController.onMoveToCurrentScreen = { [weak self] in self?.panel.moveToCurrentScreen() }
         menuController.onQuit = { NSApp.terminate(nil) }
         panel.face.onContextMenu = { [weak self] event in
             guard let self else { return }
@@ -39,37 +29,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.menuController.quickMenu.popUp(positioning: nil,
                                                at: CGPoint(x: button.bounds.midX, y: button.bounds.maxY + 4), in: button)
         }
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        prepareClock(timerCoordinator: TimerCoordinator(notifications: TimerNotifications()))
         NotificationCenter.default.addObserver(self, selector: #selector(displayConfigurationChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         for name in [NSWorkspace.activeSpaceDidChangeNotification, NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification] {
             NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(restoreFloatingWindow), name: name, object: nil)
         }
-        panel.constrainAndSavePosition()
         panel.showClock()
     }
 
-    private func applySettings(_ updated: ClockSettings) {
-        settings = updated.normalized()
-        panel.apply(settings)
-        panel.constrainAndSavePosition()
+    func prepareClock(timerCoordinator: TimerCoordinator) {
+        self.timerCoordinator = timerCoordinator
+        panel.timerCoordinator = timerCoordinator
+        timerCoordinator.onChange = { [weak self] in self?.panel.refreshTimers() }
+        timerCoordinator.restore()
+        panel.restorePosition(settings.origin)
+        panel.onPositionChanged = { [weak self] in self?.savePosition($0) }
+        savePosition(panel.clockScreenFrame.origin)
     }
 
-    private func showAdvancedSettings() {
-        if advancedSettingsController == nil {
-            let controller = AdvancedSettingsWindowController(settings: settings)
-            controller.onSettingsChanged = { [weak self] updated in self?.applySettings(updated) }
-            controller.onMoveToCurrentScreen = { [weak self] in self?.moveClockToCurrentScreen() }
-            advancedSettingsController = controller
+    private func applySettings(_ value: ClockSettings) {
+        var updated = value.normalized()
+        updated.origin = settings.origin
+        let changed = settings != updated
+        if changed {
+            settings = updated
+            store.save(settings)
         }
+        menuController.settings = settings
         advancedSettingsController?.settings = settings
-        advancedSettingsController?.showSettings()
+        if changed { panel.apply(settings) }
     }
 
-    private func moveClockToCurrentScreen() {
-        panel.moveToCurrentScreen()
+    private func savePosition(_ origin: CGPoint) {
+        let position = StoredPoint(x: origin.x, y: origin.y)
+        guard settings.origin != position else { return }
+        settings.origin = position
+        store.save(settings)
+    }
+
+    func advancedSettings() -> AdvancedSettingsWindowController {
+        if let advancedSettingsController { return advancedSettingsController }
+        let controller = AdvancedSettingsWindowController(settings: settings)
+        controller.onSettingsChanged = { [weak self] in self?.applySettings($0) }
+        controller.onMoveToCurrentScreen = menuController.onMoveToCurrentScreen
+        advancedSettingsController = controller
+        return controller
     }
 
     @objc private func displayConfigurationChanged() {
-        panel.constrainAndSavePosition()
+        panel.constrainPosition()
         restoreFloatingWindow()
     }
 
@@ -79,7 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        panel?.showClock()
+        panel.showClock()
         return false
     }
 
@@ -91,7 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        panel?.constrainAndSavePosition()
+        panel.constrainPosition()
         NotificationCenter.default.removeObserver(self)
         NSWorkspace.shared.notificationCenter.removeObserver(self)
     }

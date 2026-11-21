@@ -20,11 +20,13 @@ enum RuntimeChecks {
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = SettingsStore(defaults: defaults)
-        let panel = ClockPanel(settings: ClockSettings())
+        let app = AppDelegate(store: store, includeStatusItem: false)
+        app.prepareClock(timerCoordinator: TimerCoordinator(store: ClockTimerStore(defaults: defaults), notifications: CheckTimerNotifications()))
+        let panel = app.panel
         var hoverPoint = CGPoint(x: -100_000, y: -100_000)
         panel.mouseLocationProvider = { hoverPoint }
-        let controller = MenuController(settings: ClockSettings(), includeStatusItem: false)
-        let advanced = AdvancedSettingsWindowController(settings: ClockSettings())
+        let controller = app.menuController
+        let advanced = app.advancedSettings()
         defer { advanced.close() }
         var checks: [String] = []
         var failures: [String] = []
@@ -32,19 +34,6 @@ enum RuntimeChecks {
             if !condition { failures.append(name) }
             checks.append(name)
         }
-        controller.onSettingsChanged = { value in
-            panel.apply(value)
-            store.save(value)
-            advanced.settings = value
-        }
-        advanced.onSettingsChanged = { value in
-            controller.settings = value
-            panel.apply(value)
-            store.save(value)
-        }
-        controller.onShowAdvancedSettings = { advanced.showSettings() }
-        controller.onMoveToCurrentScreen = { panel.moveToCurrentScreen() }
-        advanced.onMoveToCurrentScreen = controller.onMoveToCurrentScreen
         var quitRequests = 0
         controller.onQuit = { quitRequests += 1 }
         check(panel.level.rawValue == NSWindow.Level.popUpMenu.rawValue - 1, "above app windows, below system menus")
@@ -262,13 +251,15 @@ enum RuntimeChecks {
         panel.hideClock()
         advanced.moveToScreenButton.performClick(nil)
         check(panel.isVisible && advanced.window?.isVisible == true &&
-              NSScreen.screens.contains { $0.visibleFrame.contains(panel.frame) },
-              "advanced screen recovery brings the clock into view and keeps settings open")
+              NSScreen.screens.contains { $0.visibleFrame.contains(panel.frame) } &&
+              store.load().origin == StoredPoint(x: panel.clockScreenFrame.minX, y: panel.clockScreenFrame.minY),
+              "advanced screen recovery saves the displayed clock origin and keeps settings open")
         if let index = controller.menu.items.firstIndex(where: { $0.title == "移回当前屏幕" }) {
             panel.hideClock()
             controller.menu.performActionForItem(at: index)
-            check(panel.isVisible && NSScreen.screens.contains { $0.visibleFrame.contains(panel.frame) },
-                  "menu screen recovery brings the clock into view")
+            check(panel.isVisible && NSScreen.screens.contains { $0.visibleFrame.contains(panel.frame) } &&
+                  store.load().origin == StoredPoint(x: panel.clockScreenFrame.minX, y: panel.clockScreenFrame.minY),
+                  "menu screen recovery brings the clock into view at the saved dial origin")
         } else { check(false, "screen recovery menu item exists") }
         if let index = controller.menu.items.firstIndex(where: { $0.title == "退出漂浮时钟" }) {
             controller.menu.performActionForItem(at: index)
@@ -765,6 +756,7 @@ enum RuntimeChecks {
         checkSmallScreenTimerViewport(check)
         checkVeryShortScreenTimerViewport(check)
         checkTimerDragging(check)
+        checkSettingsPersistence(check)
         checkSizeHoverAndOpacity(check)
         checkVisualPolish(check)
         checkSnapshotGroupOpacity(check)
@@ -774,6 +766,94 @@ enum RuntimeChecks {
         let data = try! JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
         print(String(data: data, encoding: .utf8)!)
         return failures.isEmpty ? 0 : 1
+    }
+
+    private static func checkSettingsPersistence(_ check: (Bool, String) -> Void) {
+        let suite = "FloatingClock.settings-regressions.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SettingsStore(defaults: defaults)
+        let timerStore = ClockTimerStore(defaults: defaults)
+        let screen = CGRect(x: 100, y: 100, width: 760, height: 480)
+        var initial = ClockSettings()
+        initial.origin = StoredPoint(x: screen.minX + 180, y: screen.minY)
+        store.save(initial)
+        let app = AppDelegate(store: store, includeStatusItem: false)
+        let panel = app.panel
+        panel.layoutScreenFrameOverride = screen
+        let timers = TimerCoordinator(store: timerStore, notifications: CheckTimerNotifications())
+        app.prepareClock(timerCoordinator: timers)
+        let menu = app.menuController
+        let advanced = app.advancedSettings()
+        let initialFrame = panel.frame
+        let savePosition = panel.onPositionChanged
+        panel.onPositionChanged = nil
+
+        let menuSlider = menu.transparencyView.slider
+        menuSlider.doubleValue = 46
+        _ = menuSlider.sendAction(menuSlider.action, to: menuSlider.target)
+        check(store.load().transparency == 46 && advanced.transparencyRow.slider.doubleValue == 46 &&
+              panel.face.settings.transparency == 46 && panel.frame == initialFrame && store.load().origin == initial.origin,
+              "with position handling disconnected, menu transparency saves and updates the face and advanced settings")
+
+        let layerSlider = advanced.backgroundTransparencyRow.slider
+        layerSlider.doubleValue = 72
+        _ = layerSlider.sendAction(layerSlider.action, to: layerSlider.target)
+        check(store.load().backgroundTransparency == 72 && menu.backgroundTransparencyView.slider.doubleValue == 72 &&
+              panel.face.settings.backgroundTransparency == 72 && panel.frame == initialFrame && store.load().origin == initial.origin,
+              "with position handling disconnected, advanced transparency saves and updates the face and menu")
+
+        var finalOrigins: [CGPoint] = []
+        panel.onPositionChanged = { origin in
+            finalOrigins.append(origin)
+            savePosition?(origin)
+        }
+        panel.face.onDragFinished?()
+        panel.constrainPosition()
+        check(finalOrigins.isEmpty && store.load().origin == initial.origin, "unchanged position never emits a position update")
+
+        _ = timers.add()
+        let dialAfterTray = panel.clockScreenFrame.origin
+        let trayPosition = StoredPoint(x: dialAfterTray.x, y: dialAfterTray.y)
+        check(finalOrigins == [dialAfterTray] && store.load().origin == trayPosition && trayPosition != initial.origin &&
+              dialAfterTray != panel.frame.origin,
+              "when a timer tray shifts the dial, preferences save the dial origin")
+
+        let size = advanced.faceSizeRow.slider
+        size.doubleValue = size.maxValue
+        _ = size.sendAction(size.action, to: size.target)
+        let resizedDial = panel.clockScreenFrame
+        check(finalOrigins.count == 2 && finalOrigins.last == resizedDial.origin && screen.contains(panel.frame) &&
+              store.load().faceSize == size.maxValue && store.load().origin == StoredPoint(x: resizedDial.minX, y: resizedDial.minY),
+              "resizing on a short screen saves the preferred size and final dial origin")
+
+        let finalDial = CGRect(origin: CGPoint(x: screen.maxX - resizedDial.width - 7, y: resizedDial.minY), size: resizedDial.size)
+        panel.face.onDragMoved?(finalDial)
+        check(finalOrigins.count == 2, "dragging a dial with a timer defers the position write")
+        panel.face.onDragFinished?()
+        let draggedDial = panel.clockScreenFrame
+        let draggedOrigin = StoredPoint(x: draggedDial.minX, y: draggedDial.minY)
+        check(finalOrigins.count == 3 && finalOrigins.last == draggedDial.origin && store.load().origin == draggedOrigin,
+              "releasing the dial saves its final position with timers attached")
+
+        menuSlider.doubleValue = 57
+        _ = menuSlider.sendAction(menuSlider.action, to: menuSlider.target)
+        check(store.load().transparency == 57 && store.load().origin == draggedOrigin && finalOrigins.count == 3,
+              "an older menu snapshot cannot overwrite the saved dial origin")
+
+        let restoredApp = AppDelegate(store: SettingsStore(defaults: defaults), includeStatusItem: false)
+        restoredApp.panel.layoutScreenFrameOverride = screen
+        restoredApp.prepareClock(timerCoordinator: TimerCoordinator(store: timerStore, notifications: CheckTimerNotifications()))
+        check(restoredApp.panel.clockScreenFrame == draggedDial && restoredApp.panel.timerTray.rows.count == 1 &&
+              restoredApp.menuController.transparencyView.slider.doubleValue == 57 && store.load().origin == draggedOrigin,
+              "recreating the app from isolated preferences restores the constrained dial with its attached timer")
+
+        let smallerScreen = screen.insetBy(dx: 40, dy: 20)
+        restoredApp.panel.layoutScreenFrameOverride = smallerScreen
+        let constrained = restoredApp.panel.clockScreenFrame.origin
+        check(smallerScreen.contains(restoredApp.panel.frame) && constrained != draggedDial.origin &&
+              store.load().origin == StoredPoint(x: constrained.x, y: constrained.y),
+              "changing the screen saves the final constrained dial origin")
     }
 
     private static func checkTimeZoneRendering(_ check: (Bool, String) -> Void) {
@@ -1240,7 +1320,7 @@ enum RuntimeChecks {
             var entryMatches = true
             var footerStaysAtBottom = true
             for (dx, dy) in [(-1.0, 80.0), (1, 80), (-1, -80), (1, -80), (1, 1), (1, -1), (1, 1)] {
-                let desired = CGRect(x: screen.midX + dx * 150 - start.width / 2,
+                let desired = CGRect(x: screen.midX + dx * 150 - start.width / 2 + CGFloat(count * 2),
                                      y: screen.midY + dy - start.height / 2, width: start.width, height: start.height)
                 let pointer = CGPoint(x: desired.minX + gripOffset.x, y: desired.minY + gripOffset.y)
                 panel.sendEvent(event(.leftMouseDragged, at: pointer))
@@ -1616,7 +1696,7 @@ enum RuntimeChecks {
                     let contained = screen.contains(panel.frame)
                     let correctDirection = (tray.frame.midY > panel.face.dialCard.midY) == above
                     panel.layoutScreenFrameOverride = CGRect(x: 0, y: 0, width: 1280, height: 900)
-                    panel.constrainAndSavePosition()
+                    panel.constrainPosition()
                     check(panel.clockScreenFrame.width == 444 && panel.face.settings.faceSize == 420 && timers.timers.count == count,
                           "\(Int(height))pt screen restores the preferred dial with timers active on a larger display")
                     panel.layoutScreenFrameOverride = screen

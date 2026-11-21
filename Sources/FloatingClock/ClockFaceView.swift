@@ -50,6 +50,7 @@ final class ClockFaceView: NSView {
     private(set) var staticDialRenderCount = 0
     private var hoverTracking: NSTrackingArea?
     private var dragStart: (pointer: CGPoint, dial: CGRect)?
+    var isDragging: Bool { dragStart != nil }
     private let background = CardBackgroundView()
     private let drawing = DialDrawingView()
     var cardLayer: CALayer? { background.layer }
